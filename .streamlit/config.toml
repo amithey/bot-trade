@@ -1,0 +1,45 @@
+# =============================================================================
+# BotTrade — Streamlit runtime config
+# =============================================================================
+# Streamlit's file-watcher crashes when it tries to introspect certain
+# third-party modules (notably `torch.classes` inside `transformers`).
+# Excluding the Python environment below prevents that crash and also
+# keeps hot-reload fast by not walking thousands of vendored files.
+
+[server]
+# Folders Streamlit should NOT watch for hot-reload.
+# Patterns use fnmatch-style globs and are matched against absolute paths.
+folderWatchBlacklist = [
+    "**/site-packages/**",
+    "**/site-packages",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/env/**",
+    "**/__pycache__/**",
+    "**/.git/**",
+    "**/node_modules/**",
+    "**/data/chroma_db/**",
+]
+
+# Static file-watcher is more permissive and less likely to introspect C extensions.
+fileWatcherType = "auto"
+
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
+
+[logger]
+level = "info"
+
+# =============================================================================
+# TradingView-inspired dark theme
+# =============================================================================
+[theme]
+base             = "dark"
+primaryColor     = "#58a6ff"
+backgroundColor  = "#0d1117"
+secondaryBackgroundColor = "#161b22"
+textColor        = "#f0f6fc"
+font             = "sans serif"

@@ -1,0 +1,46 @@
+# Don't bake host data into the image — bind-mount it instead.
+data/
+logs/
+
+# Python build artefacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets — never copy .env into the image. Compose mounts via env_file.
+.env
+.env.*
+!.env.example
+
+# VCS
+.git/
+.gitignore
+
+# Frontend builds, if any
+node_modules/
+
+# Tests / docs
+tests/
+docs/
+*.md
+!README.md
+!DEPLOY.md
+
+# Misc
+*.log
+*.bak
+*.swp

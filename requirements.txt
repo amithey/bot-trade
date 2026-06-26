@@ -1,0 +1,64 @@
+# =============================================================================
+# BotTrade — AI Trading Bot with RAG Architecture
+# requirements.txt — Python 3.10+
+# =============================================================================
+
+# --- LangChain Ecosystem ---
+langchain==0.3.25
+langchain-core==0.3.57
+langchain-community==0.3.24
+langchain-anthropic==0.3.15
+langchain-chroma==0.2.4
+langchain-text-splitters==0.3.8
+langchain-huggingface==0.1.3
+
+# --- LLM: Anthropic / Claude ---
+anthropic==0.51.0
+
+# --- Vector Database ---
+chromadb==0.6.3
+
+# --- Embeddings (local, no API key required) ---
+sentence-transformers==3.4.1
+torch==2.6.0                   # CPU-only; swap for torch+cu121 for GPU
+transformers==4.51.3
+
+# --- Market Data ---
+yfinance==0.2.54
+pandas==2.2.3
+numpy==2.2.4
+pandas-ta==0.3.14b             # Technical indicators (MA, RSI, MACD)
+
+# --- Knowledge Ingestion: YouTube ---
+youtube-transcript-api==1.0.3
+yt-dlp==2026.3.17              # Playlist metadata extraction (video IDs + titles)
+
+# --- Knowledge Ingestion: PDF ---
+PyPDF2==3.0.1
+pdfplumber==0.11.5
+
+# --- Backtesting ---
+vectorbt==0.26.2
+
+# --- Configuration & Environment ---
+python-dotenv==1.1.0
+pydantic==2.11.3
+pydantic-settings==2.9.1
+
+# --- Utilities ---
+tenacity==9.1.2                # Retry logic for API calls
+rich==14.0.0                   # Beautiful terminal output / logging
+tqdm==4.67.1                   # Progress bars
+requests==2.32.3
+
+# --- Web Dashboard (Phase 6) ---
+streamlit>=1.35.0
+plotly>=5.22.0
+streamlit-autorefresh>=0.0.1    # Non-blocking JS timer for live loop
+
+# --- Development & Testing ---
+pytest==8.3.5
+pytest-asyncio==0.26.0
+black==25.1.0
+ruff==0.11.6
+mypy==1.15.0

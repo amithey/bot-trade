@@ -1,0 +1,69 @@
+# =============================================================================
+# BotTrade — docker-compose orchestration
+# =============================================================================
+# Usage:
+#   docker compose up -d              # start in background
+#   docker compose logs -f bottrade   # tail logs
+#   docker compose down               # stop and remove
+#   docker compose build --no-cache   # rebuild from scratch
+# =============================================================================
+
+services:
+  bottrade:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bottrade:latest
+    container_name: bottrade
+    restart: unless-stopped     # auto-restart on crash, but not on `docker stop`
+    env_file:
+      - .env                    # ANTHROPIC_API_KEY + LLM_MODEL + auth hash
+    environment:
+      # Override / supplement values from .env here.
+      BOTTRADE_ENV: production
+    ports:
+      - "${BOTTRADE_PORT:-8501}:8501"
+    volumes:
+      # Persist user data across container rebuilds.
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Cache HuggingFace model weights so cold-start doesn't re-download.
+      - hf_cache:/home/bottrade/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    # CPU / memory cap — adjust to your host. Comment out for no limits.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # Optional: TLS termination + auth on top via Caddy. Uncomment to enable.
+  # caddy:
+  #   image: caddy:2.8
+  #   container_name: bottrade_caddy
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - bottrade
+
+volumes:
+  hf_cache:
+  # caddy_data:
+  # caddy_config:
