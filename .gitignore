@@ -39,3 +39,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime artifacts (never commit — contain personal trading data)
+logs/
+data/user_profile.json
+data/yfinance_cache/
+data/ml_models/*.joblib

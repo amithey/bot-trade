@@ -1,0 +1,8 @@
+{
+  "capital": 10000.0,
+  "trade_size_pct": 20,
+  "risk_profile": "Balanced",
+  "watchlist": ["BTC-USD", "ETH-USD", "SPY", "QQQ", "AAPL"],
+  "daily_target_pct": 0.0,
+  "daily_loss_limit_pct": 5.0
+}
