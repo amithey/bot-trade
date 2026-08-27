@@ -1,0 +1,5 @@
+# Optional: only needed to run backtesting/backtest_runner.py.
+# Not installed on the hosted dashboard — vectorbt 1.x needs numpy>=2.4.6
+# and pandas>=3.0.3, both well ahead of what the rest of this project
+# pins, and the dashboard never imports this module.
+vectorbt>=1.1.0

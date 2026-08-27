@@ -5,18 +5,16 @@
 
 # --- LangChain Ecosystem ---
 langchain==0.3.25
-langchain-core==0.3.57
 langchain-community==0.3.24
 langchain-anthropic==0.3.15
 langchain-chroma==0.2.4
 langchain-text-splitters==0.3.8
-langchain-huggingface==0.1.3
 
 # --- LLM: Anthropic / Claude ---
-anthropic==0.51.0
+anthropic==0.52.0
 
 # --- Vector Database ---
-chromadb==0.6.3
+chromadb==1.5.9
 
 # --- Embeddings (local, no API key required) ---
 sentence-transformers==3.4.1
@@ -27,7 +25,6 @@ transformers==4.51.3
 yfinance==0.2.54
 pandas==2.2.3
 numpy==2.2.4
-pandas-ta==0.3.14b             # Technical indicators (MA, RSI, MACD)
 
 # --- Knowledge Ingestion: YouTube ---
 youtube-transcript-api==1.0.3
@@ -36,9 +33,6 @@ yt-dlp==2026.3.17              # Playlist metadata extraction (video IDs + title
 # --- Knowledge Ingestion: PDF ---
 PyPDF2==3.0.1
 pdfplumber==0.11.5
-
-# --- Backtesting ---
-vectorbt==0.26.2
 
 # --- Configuration & Environment ---
 python-dotenv==1.1.0
