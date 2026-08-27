@@ -30,9 +30,14 @@ from streamlit_autorefresh import st_autorefresh
 from dashboard._shared import (
     BG_DEEP, BG_PANEL, BORDER, C_BUY, C_HOLD, C_SELL, CUSTOM_LABEL, CYAN,
     DEFAULT_TICKERS, GRID, RISK_CHOICES, TEXT, TEXT_DIM, TEXT_HI,
+    account_id as _account_id,
     apply_theme, ensure_event_buffer, ensure_portfolio_in_session,
-    ensure_profile_in_session, get_live_engine, pump_events, save_profile,
+    ensure_profile_in_session, engine_capacity_message, get_live_engine,
+    get_tenant, pump_events, save_portfolio, save_profile,
 )
+from saas.plans import Funding as _Funding
+from saas.pricing import format_usd as _fmt_usd
+from saas.pricing import format_usd_md as _fmt_usd_md
 from utils.market_logic import get_market_status
 
 # Install crash reporter once per process — captures uncaught exceptions
@@ -64,18 +69,36 @@ ensure_portfolio_in_session()
 ensure_event_buffer()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# API key pre-flight
+# API key pre-flight — deliberately non-fatal
+#
+# A missing ANTHROPIC_API_KEY used to stop the app dead. It no longer does:
+# COMMITTEE mode (38 indicators voting on every bar) makes no API calls at
+# all, so a visitor with no key still gets a complete, working product. Only
+# the LLM modes are gated, and the entitlement layer does that per user
+# further down.
 # ─────────────────────────────────────────────────────────────────────────────
 _raw_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-if not (_raw_key.startswith("sk-ant-") and "PASTE" not in _raw_key.upper()):
-    st.error("ANTHROPIC_API_KEY missing or invalid. Edit `.env` at project "
-             "root and restart Streamlit.")
-    st.stop()
+#: True when this deployment has a shared key that can fund trial credit.
+_platform_key_ok = (_raw_key.startswith("sk-ant-")
+                    and "PASTE" not in _raw_key.upper())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Engine + auto-refresh
 # ─────────────────────────────────────────────────────────────────────────────
 engine = get_live_engine()
+if engine is None:
+    # The process is at its live-bot ceiling. Refusing a new bot is the
+    # correct outcome — the alternative is evicting someone else's running
+    # engine and leaving their stop-loss unwatched.
+    st.error(engine_capacity_message() or
+             "No live-bot slots are free on this deployment right now.")
+    st.caption(
+        "Backtesting, the Committee Lab and every analysis page still work — "
+        "only the live loop is capped. Raise `BOTTRADE_MAX_LIVE_ENGINES` if "
+        "this host has the headroom."
+    )
+    st.stop()
+
 pump_events()
 
 # 2-second refresh gives a "live heartbeat" feel without overloading Claude
@@ -86,6 +109,17 @@ if engine.is_running():
 state = engine.snapshot()
 port  = st.session_state["portfolio"]
 
+_tenant_state = state.get("tenant") or {}
+_plan_badge = _tenant_state.get("plan_name", "Local")
+_fund_badge = {
+    "BYOK":     "Your API key",
+    "PLATFORM": "Trial credit",
+    "NONE":     "No API key",
+}.get(_tenant_state.get("funding", ""), "Operator key")
+_fund_class = "badge-green" if _tenant_state.get("funding") == "BYOK" \
+    else ("badge-amber" if _tenant_state.get("funding") == "PLATFORM"
+          else "badge-gray")
+
 st.markdown(
     f'<div class="bt-brand">'
     f'<div style="display:flex;align-items:center;gap:.8rem;">'
@@ -94,7 +128,8 @@ st.markdown(
     f'<div class="bt-brand-sub">Autonomous market analysis and execution terminal</div></div>'
     f'</div>'
     f'<div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end;">'
-    f'<span class="badge badge-blue">Multi-source AI</span>'
+    f'<span class="badge badge-blue">{_html.escape(_plan_badge)} plan</span>'
+    f'<span class="badge {_fund_class}">{_html.escape(_fund_badge)}</span>'
     f'<span class="badge badge-gray">Paper execution</span>'
     f'<span class="badge badge-amber">Risk controlled</span>'
     f'</div>'
@@ -137,6 +172,42 @@ use 120s+ intervals.
 - Test any setup risk-free first → **🗳 Committee Lab** page
         """)
 
+    # Plan + spend at a glance. Anyone running the bot on their own API key
+    # should be able to see what it is costing them without hunting for it.
+    _side_tenant = get_tenant()
+    _side_ent = _side_tenant.entitlement
+    _side_usage = _side_tenant.usage()
+    st.markdown("---")
+    st.markdown(f"**Plan · {_side_ent.plan.name}**")
+    _sc1, _sc2 = st.columns(2)
+    _sc1.metric("This month", _fmt_usd(_side_usage["cost_usd"]))
+    _sc2.metric("Calls saved", f"{_side_usage['calls_saved']:,}",
+                help="Decisions reused from the shared cache instead of "
+                     "hitting the API.")
+    if _side_ent.funding is _Funding.PLATFORM:
+        st.caption(f"Trial credit left: "
+                   f"{_fmt_usd_md(_side_ent.platform_budget_remaining_usd)}")
+    elif _side_ent.funding is _Funding.BYOK:
+        st.caption("Running on your own API key.")
+    st.page_link("pages/10_Usage_and_Billing.py", label="Usage & billing",
+                 icon="🧾")
+    st.page_link("pages/2_Settings.py", label="Plan & API key", icon="🔑")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ██  PLAN CONTEXT — decides which strategy modes and intervals are offered
+# ─────────────────────────────────────────────────────────────────────────────
+_tenant = get_tenant()
+_plan_ent = _tenant.entitlement
+
+if not _plan_ent.llm_available:
+    st.info(
+        f"**{_plan_ent.plan.name} plan · running on local computation.** "
+        f"{_plan_ent.lock_reason} "
+        f"Committee ×38 works fully without one — it votes with 38 technical "
+        f"indicators and makes no API calls.",
+        icon="🗳",
+    )
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  TOP CONTROL BAR  — single row, all columns share identical structure
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,15 +242,26 @@ with c_strategy:
         "BOARDROOM": "🪑 Boardroom ×8",
     }
     _strat_opts = ["AI", "COMMITTEE", "HYBRID", "BOARDROOM"]
+    # Modes the plan does not cover stay visible but locked, so the upgrade
+    # path is obvious instead of the option silently vanishing.
+    _ent = _tenant.entitlement
+    _locked = {m for m in _strat_opts if not _ent.allows(m)}
     prev_strat = st.session_state.get("strategy_mode",
                                       state.get("strategy_mode", "AI"))
+    if prev_strat in _locked:
+        prev_strat = "COMMITTEE"
     strat_idx = _strat_opts.index(prev_strat) if prev_strat in _strat_opts else 0
     strategy_mode = st.selectbox(
         "STRATEGY", _strat_opts, index=strat_idx,
-        format_func=lambda s: _STRAT_LABELS.get(s, s),
+        format_func=lambda s: (f"🔒 {_STRAT_LABELS.get(s, s)}" if s in _locked
+                               else _STRAT_LABELS.get(s, s)),
         key="strategy_widget",
-        help="Full comparison in the sidebar → 📖 Strategy Guide.",
+        help="🔒 needs an API key or a plan upgrade — see Settings. "
+             "Full comparison in the sidebar → 📖 Strategy Guide.",
     )
+    if strategy_mode in _locked:
+        st.caption(f"🔒 {_ent.lock_reason or 'Not available on your plan.'}")
+        strategy_mode = "COMMITTEE"
     st.session_state["strategy_mode"] = strategy_mode
 
 with c_cap:
@@ -217,10 +299,32 @@ with c_risk:
         save_profile()
 
 with c_interval:
-    interval = st.select_slider("CYCLE", options=[15, 30, 60, 120, 300],
-                                value=state["interval_sec"],
-                                key="interval_widget",
-                                format_func=lambda v: f"{v}s")
+    # Offer only intervals the plan actually permits — a slider that lets you
+    # pick 15s and then silently runs at 300s is worse than not offering it.
+    # The ladder runs past 300s so every plan, including the slowest, still
+    # has a real choice rather than a single pinned value.
+    _all_intervals = [15, 30, 60, 120, 300, 600, 900]
+    _ivl_opts = [v for v in _all_intervals if v >= _plan_ent.min_interval_sec] \
+        or [_plan_ent.min_interval_sec]
+    _ivl_prev = int(state["interval_sec"])
+    if _ivl_prev not in _ivl_opts:
+        _ivl_prev = _ivl_opts[0]
+    _ivl_help = (f"{_plan_ent.plan.name} plan cycles no faster than "
+                 f"{_plan_ent.min_interval_sec}s."
+                 if len(_ivl_opts) < len(_all_intervals) else None)
+    if len(_ivl_opts) == 1:
+        # select_slider needs a range; a single permitted value gets a
+        # read-only control instead of a one-position slider.
+        interval = _ivl_opts[0]
+        st.selectbox("CYCLE", _ivl_opts, index=0, disabled=True,
+                     format_func=lambda v: f"{v}s",
+                     key="interval_widget", help=_ivl_help)
+    else:
+        interval = st.select_slider(
+            "CYCLE", options=_ivl_opts, value=_ivl_prev,
+            key="interval_widget", format_func=lambda v: f"{v}s",
+            help=_ivl_help,
+        )
     st.session_state["interval_sec"] = int(interval)
 
 c_start, c_reset, c_spacer = st.columns([1.1, 1.1, 6.8], gap="small")
@@ -247,9 +351,15 @@ with c_start:
 with c_reset:
     if st.button("RESET", use_container_width=True, help="Reset portfolio"):
         from portfolio.virtual_account import LivePortfolio
-        st.session_state["portfolio"] = LivePortfolio(
+        from trading.registry import get_registry
+        # Stop and drop the engine first: it holds a reference to the old
+        # portfolio and would otherwise keep checkpointing it back over the
+        # fresh one. get_live_engine() rebuilds on the next run.
+        get_registry().stop(_account_id())
+        fresh = LivePortfolio(
             initial_capital=float(st.session_state["starting_capital"]))
-        st.session_state["_live_engine"] = None   # rebuild with new portfolio
+        st.session_state["portfolio"] = fresh
+        save_portfolio(fresh)
         st.rerun()
 
 # Keep engine config in sync with widgets + settings even while running

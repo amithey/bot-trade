@@ -12,11 +12,16 @@ if str(_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ROOT))
 # ────────────────────────────────────────────────────────────────────────────
 
+from dashboard._identity import account_id, auth_mode, identifies_individuals
 from dashboard._shared import (
     DEFAULT_TICKERS, RISK_CHOICES,
-    apply_theme, ensure_profile_in_session, save_profile,
-    validate_ticker_symbol,
+    apply_theme, current_engine, ensure_profile_in_session, get_tenant,
+    get_user_api_key,
+    save_profile, set_user_api_key, validate_ticker_symbol,
 )
+from saas import keyvault
+from saas.plans import PLANS, Funding
+from saas.pricing import format_usd
 
 st.set_page_config(page_title="BotTrade - Settings", page_icon=":material/settings:", layout="wide",
                    initial_sidebar_state="expanded")
@@ -24,16 +29,114 @@ apply_theme()
 ensure_profile_in_session()
 
 st.markdown('<div class="page-title">SETTINGS</div>', unsafe_allow_html=True)
-st.markdown('<div class="page-sub">Trading profile, watchlist, and API status</div>', unsafe_allow_html=True)
+st.markdown('<div class="page-sub">Plan, API key, trading profile, and watchlist</div>', unsafe_allow_html=True)
 
-# ── API key status ──────────────────────────────────────────────────────────
-raw_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-key_ok  = bool(raw_key) and raw_key.startswith("sk-ant-") and "PASTE" not in raw_key.upper()
-if key_ok:
-    st.markdown('<span class="badge badge-green">ANTHROPIC_API_KEY loaded</span>',
-                unsafe_allow_html=True)
-else:
-    st.error("ANTHROPIC_API_KEY missing or invalid. Edit .env at the project root.")
+# ── Plan + API key ──────────────────────────────────────────────────────────
+tenant = get_tenant()
+ent = tenant.entitlement
+
+st.markdown("##### Your Plan & API Key")
+
+pc1, pc2, pc3 = st.columns([1.1, 1, 1.4])
+with pc1:
+    st.metric("Plan", ent.plan.name,
+              help=ent.plan.tagline)
+with pc2:
+    funding_label = {
+        Funding.BYOK:     "Your own key",
+        Funding.PLATFORM: "Trial credit",
+        Funding.NONE:     "Not funded",
+    }[ent.funding]
+    st.metric("Tokens billed to", funding_label)
+with pc3:
+    if ent.funding is Funding.PLATFORM:
+        st.metric("Trial credit left",
+                  format_usd(ent.platform_budget_remaining_usd),
+                  help="Spent on the shared key. Add your own key for unlimited use.")
+    else:
+        st.metric("Modes unlocked", ", ".join(sorted(ent.allowed_modes)))
+
+if ent.lock_reason:
+    st.warning(ent.lock_reason)
+
+st.caption(
+    "COMMITTEE mode — 38 technical indicators voting every bar — makes no API "
+    "calls and is always available, on every plan, at no cost. Everything that "
+    "calls Claude (AI, HYBRID, BOARDROOM) runs on the key below, so those "
+    "tokens bill to your own Anthropic account, not ours."
+)
+
+kc1, kc2 = st.columns([2.4, 1])
+with kc1:
+    current = get_user_api_key()
+    entered = st.text_input(
+        "Anthropic API key",
+        value="",
+        type="password",
+        placeholder=(keyvault.mask(current) if current
+                     else "sk-ant-api03-…  (kept in this session only)"),
+        help="Get one at console.anthropic.com → API Keys. Stored in your "
+             "browser session only — never written to disk, never logged, "
+             "never shown back to you in full.",
+    )
+with kc2:
+    st.markdown('<div style="height:1.85rem"></div>', unsafe_allow_html=True)
+    b1, b2 = st.columns(2)
+    save_key = b1.button("Save", use_container_width=True, type="primary")
+    clear_key = b2.button("Remove", use_container_width=True,
+                          disabled=not current)
+
+if save_key:
+    ok, msg = keyvault.validate_format(entered)
+    if not ok:
+        st.error(msg)
+    else:
+        with st.spinner("Verifying key with Anthropic…"):
+            live_ok, live_msg = keyvault.verify_live(entered)
+        if live_ok:
+            set_user_api_key(entered)
+            st.success(f"{live_msg} Key saved for this session.")
+            st.rerun()
+        else:
+            st.error(live_msg)
+
+if clear_key:
+    set_user_api_key("")
+    st.info("Key removed. AI modes are locked until you add one again.")
+    st.rerun()
+
+if current:
+    st.markdown(
+        f'<span class="badge badge-green">Key active — {keyvault.mask(current)}'
+        f'</span>', unsafe_allow_html=True)
+
+with st.expander("Compare plans"):
+    for plan in PLANS.values():
+        price = "Free" if plan.price_usd_month == 0 else \
+                f"${plan.price_usd_month:.0f}/mo"
+        marker = "  ← current" if plan.id == ent.plan.id else ""
+        st.markdown(f"**{plan.name} — {price}**{marker}  \n_{plan.tagline}_")
+        for line in plan.highlights:
+            st.markdown(f"- {line}")
+        st.markdown("")
+
+# ── Host notes — only relevant to whoever is running this instance ──────────
+_platform_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+if not _platform_key:
+    st.caption(
+        "Host note: no `ANTHROPIC_API_KEY` in `.env`, so trial credit is "
+        "unavailable on this deployment and every user must bring their own key."
+    )
+elif not identifies_individuals():
+    st.warning(
+        f"**Host note — trial credit is not enforceable in `{auth_mode()}` mode.** "
+        f"Without per-person sign-in every visitor shares the account "
+        f"`{account_id()}`, so the free budget is one pool for the whole "
+        f"deployment rather than per user. Configure `[auth]` in "
+        f"`.streamlit/secrets.toml` (see DEPLOY.md) before opening the free "
+        f"tier to the public, or set `BOTTRADE_FREE_BUDGET_USD=0`.",
+        icon="🔓",
+    )
 
 st.markdown("---")
 
@@ -117,15 +220,12 @@ new_target = float(target_val) if target_on else 0.0
 if (new_target != prev_target) or (loss_limit != prev_loss):
     st.session_state["daily_target_pct"]     = new_target
     st.session_state["daily_loss_limit_pct"] = float(loss_limit)
-    # Persist to profile JSON
-    from config.user_profile import UserProfile
-    from dashboard._shared import PROFILE_PATH
-    prof = UserProfile.load(PROFILE_PATH)
-    prof.daily_target_pct     = new_target
-    prof.daily_loss_limit_pct = float(loss_limit)
-    prof.save(PROFILE_PATH)
+    # Write the whole profile from session state to this account's own file.
+    # Session state is the source of truth here; re-reading the file first
+    # would reset capital and watchlist to defaults on a brand-new account.
+    save_profile()
     # Also push live to a running engine
-    eng = st.session_state.get("_live_engine")
+    eng = current_engine()
     if eng is not None:
         eng.set_config(daily_target_pct=new_target,
                        daily_loss_limit_pct=float(loss_limit))
@@ -273,7 +373,7 @@ new_cfg = NotificationConfig(
 # Save + push to live engine on any change
 if new_cfg.to_dict() != _ncfg.to_dict():
     new_cfg.save()
-    eng = st.session_state.get("_live_engine")
+    eng = current_engine()
     if eng is not None:
         try:
             eng.update_notifier_config(new_cfg)

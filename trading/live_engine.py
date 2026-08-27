@@ -68,11 +68,25 @@ class LiveTradingEngine:
         retriever,
         engine,
         max_events: int = 500,
+        tenant=None,
     ) -> None:
         self.portfolio   = portfolio
         self._fetcher    = fetcher
         self._retriever  = retriever
         self._engine     = engine
+
+        # Commercial context (saas.tenant.Tenant) — decides which strategy
+        # modes this user may run, how fast, and whose API key pays. ``None``
+        # means single-user mode: no gating, operator's key, no metering.
+        self._tenant = tenant
+        # Shared-decision-cache accounting, surfaced in snapshot() so the UI
+        # can show what the cache is saving.
+        self._api_cycles:    int = 0    # cycles that actually called Claude
+        self._cached_cycles: int = 0    # cycles served from the shared cache
+
+        # Set by the owner (see dashboard/_shared.get_live_engine) to persist
+        # the portfolio after every cycle. None → no persistence.
+        self._persist_cb = None
 
         # Config (settable while running via set_config)
         self._ticker         = "BTC-USD"
@@ -92,6 +106,7 @@ class LiveTradingEngine:
         self._last_committee: Optional[dict] = None
         self._committee = None               # lazy IndicatorCommittee
         self._boardroom = None               # lazy AnalystBoardroom
+        self._boardroom_llm = None           # LLM the boardroom was built on
         self._last_boardroom: Optional[dict] = None
         # Mark-to-market equity history — one point per cycle, ~24h at 30s
         self._equity_history: deque[tuple[datetime, float]] = deque(maxlen=2880)
@@ -243,6 +258,129 @@ class LiveTradingEngine:
         return self._thread is not None and self._thread.is_alive() \
                and not self._stop_flag.is_set()
 
+    # ── Multi-tenancy: entitlements, key routing, shared decisions ─────────
+
+    def set_tenant(self, tenant) -> None:
+        """Attach (or replace) the commercial context.
+
+        Re-coerces the current mode and interval immediately, so a user who
+        exhausts their trial budget mid-session is stepped down to COMMITTEE
+        on the very next cycle rather than at the next config change.
+        """
+        with self._lock:
+            self._tenant = tenant
+            mode, note = self._coerce_mode(self._strategy_mode)
+            if note:
+                self._emit(PulseStage.IDLE, note, level="WARN")
+            self._strategy_mode = mode
+            self._interval_sec, ivl_note = self._clamp_interval(self._interval_sec)
+            if ivl_note:
+                self._emit(PulseStage.IDLE, ivl_note, level="WARN")
+
+    def _entitlement(self):
+        """This user's entitlement, or ``None`` in single-user mode."""
+        t = self._tenant
+        if t is None:
+            return None
+        try:
+            return t.entitlement
+        except Exception as exc:                               # noqa: BLE001
+            self._emit(PulseStage.ERROR,
+                       f"Entitlement check failed ({exc}) — assuming free tier",
+                       level="WARN")
+            from saas.plans import resolve as _resolve
+            return _resolve("FREE", has_own_key=False, platform_spent_usd=1e9)
+
+    def _coerce_mode(self, mode: str) -> tuple[str, str]:
+        ent = self._entitlement()
+        if ent is None:
+            return mode, ""
+        return ent.coerce_mode(mode)
+
+    def _clamp_interval(self, seconds) -> tuple[int, str]:
+        ent = self._entitlement()
+        if ent is None:
+            return max(5, int(seconds)), ""
+        return ent.clamp_interval(seconds)
+
+    def _ai_engine(self):
+        """The engine whose API key funds this cycle.
+
+        With a tenant, that is the engine bound to their own key (metered and
+        attributed to them).  Without one, the process-wide engine built from
+        the operator's ``.env``.
+        """
+        t = self._tenant
+        if t is None:
+            return self._engine
+        eng = t.engine()
+        return eng if eng is not None else self._engine
+
+    def _get_boardroom(self):
+        """The analyst boardroom bound to the *current* funding engine.
+
+        Rebuilt whenever the engine changes — a user who pastes their own key
+        mid-session must not keep convening a boardroom wired to the previous
+        key's LLM.
+        """
+        engine = self._ai_engine()
+        llm = getattr(engine, "llm", None)
+        if llm is None:
+            raise RuntimeError("AI engine exposes no LLM")
+        if self._boardroom is None or self._boardroom_llm is not llm:
+            from decision_engine.boardroom import AnalystBoardroom
+            self._boardroom = AnalystBoardroom(llm)
+            self._boardroom_llm = llm
+        return self._boardroom
+
+    @staticmethod
+    def _bar_stamp(snap) -> str:
+        """Identity of the most recent bar — the unit of decision sharing.
+
+        Two users looking at the same symbol on the same bar are looking at
+        exactly the same market state, so they should never pay for two calls.
+        """
+        try:
+            return str(snap.data.index[-1])
+        except Exception:                                      # noqa: BLE001
+            return "unknown"
+
+    def _shared_decision(self, cache_key: str, ttl: float, compute, *,
+                         mode: str, ticker: str):
+        """Run ``compute`` unless another user already ran it for this bar.
+
+        Returns whatever ``compute`` returns.  On a hit, emits a pulse so the
+        saving is visible in the log and records it against the tenant's
+        ledger, which is what lets the operator prove the cache is working
+        rather than assert it.
+        """
+        from decision_engine.decision_cache import get_decision_cache
+
+        # Tag whatever the meter records next, so the usage page can break
+        # spend down by strategy mode and symbol.
+        meter = getattr(self._ai_engine(), "usage_meter", None)
+        if meter is not None:
+            meter.set_context(mode=mode, ticker=ticker)
+
+        cache = get_decision_cache()
+        value, was_cached = cache.get_or_compute(cache_key, compute, ttl=ttl)
+        with self._lock:
+            if was_cached:
+                self._cached_cycles += 1
+            else:
+                self._api_cycles += 1
+        if was_cached:
+            self._emit(PulseStage.AI,
+                       f"⚡ Reused this bar's {mode} verdict from the shared "
+                       f"cache — no API call", level="INFO")
+            t = self._tenant
+            if t is not None:
+                try:
+                    t.record_saving(mode=mode, ticker=ticker)
+                except Exception:                              # noqa: BLE001
+                    pass
+        return value
+
     def set_config(
         self,
         ticker: Optional[str] = None,
@@ -267,16 +405,24 @@ class LiveTradingEngine:
                 self._wake_event.set()
             if strategy_mode is not None \
                     and strategy_mode in ("AI", "COMMITTEE", "HYBRID",
-                                          "BOARDROOM") \
-                    and strategy_mode != self._strategy_mode:
-                self._strategy_mode = strategy_mode
-                self._last_decision = None
-                self._last_committee = None
-                self._emit(PulseStage.IDLE,
-                           f"Strategy mode → {strategy_mode}", level="INFO")
-                self._wake_event.set()
+                                          "BOARDROOM"):
+                # A mode the plan does not cover degrades to COMMITTEE rather
+                # than failing — the user keeps trading, just deterministically.
+                mode, note = self._coerce_mode(strategy_mode)
+                if note:
+                    self._emit(PulseStage.IDLE, note, level="WARN")
+                if mode != self._strategy_mode:
+                    self._strategy_mode = mode
+                    self._last_decision = None
+                    self._last_committee = None
+                    self._emit(PulseStage.IDLE,
+                               f"Strategy mode → {mode}", level="INFO")
+                    self._wake_event.set()
             if interval_sec is not None:
-                self._interval_sec = max(5, int(interval_sec))
+                secs, note = self._clamp_interval(interval_sec)
+                if note:
+                    self._emit(PulseStage.IDLE, note, level="WARN")
+                self._interval_sec = max(5, secs)
             if risk_profile is not None and risk_profile != self._risk_profile:
                 self._risk_profile = risk_profile
                 from risk import SafetyConfig, SlippageConfig
@@ -323,7 +469,20 @@ class LiveTradingEngine:
                 "halt_reason":     self._halt_reason,
                 "safety":          self.get_safety_status().to_dict(),
                 "slippage_enabled": self._enable_slippage,
+                "api_cycles":      self._api_cycles,
+                "cached_cycles":   self._cached_cycles,
+                "tenant":          self._tenant_snapshot(),
             }
+
+    def _tenant_snapshot(self) -> Optional[dict]:
+        """Plan / funding / entitlement summary for the UI, or ``None``."""
+        t = self._tenant
+        if t is None:
+            return None
+        try:
+            return t.to_dict()
+        except Exception:                                      # noqa: BLE001
+            return None
 
     def drain_events(self) -> list[PulseEvent]:
         """Drain all queued events (for log append in UI)."""
@@ -677,6 +836,11 @@ class LiveTradingEngine:
         try:
             while not self._stop_flag.is_set():
                 self._cycle_once()
+                # Checkpoint here rather than inside _cycle_once: the
+                # stop-loss and take-profit paths sell and then return early,
+                # so a save at the end of the cycle body would miss exactly
+                # the trades that matter most.
+                self._checkpoint()
                 if self._stop_flag.is_set():
                     break
                 # Sleep in short ticks so stop() is responsive
@@ -712,7 +876,34 @@ class LiveTradingEngine:
                        level="ERROR",
                        meta={"traceback": traceback.format_exc()})
         finally:
+            # A crashed or stopped loop still owes the user their trades.
+            self._checkpoint()
             self._emit(PulseStage.STOPPED, "Loop exited", level="WARN")
+
+    def _checkpoint(self) -> None:
+        """Persist the portfolio, if the owner gave us somewhere to put it.
+
+        Never raises: a disk problem must not take down a running bot, and
+        the next cycle will try again a few seconds later.
+        """
+        cb = self._persist_cb
+        if cb is None:
+            return
+        try:
+            cb(self.portfolio)
+        except Exception as exc:                               # noqa: BLE001
+            self._emit(PulseStage.ERROR,
+                       f"Could not save portfolio: {type(exc).__name__}",
+                       level="WARN")
+
+    def set_persist_callback(self, cb) -> None:
+        """Install the function that writes the portfolio to durable storage.
+
+        Called after every cycle and once more when the loop exits.  ``None``
+        disables persistence (single-user / test use).
+        """
+        with self._lock:
+            self._persist_cb = cb
 
     def _cycle_once(self) -> None:
         with self._lock:
@@ -908,8 +1099,33 @@ class LiveTradingEngine:
                 return
 
         # ── Decision — committee vote, RAG + Claude, or both (hybrid) ──────
+        # Re-check entitlement every cycle, not just on config change: a trial
+        # budget can run out mid-session, and the right response is a quiet
+        # step down to COMMITTEE rather than a stream of API errors.
         with self._lock:
             strategy_mode = self._strategy_mode
+        strategy_mode, gate_note = self._coerce_mode(strategy_mode)
+        if gate_note:
+            self._emit(PulseStage.AI, gate_note, level="WARN")
+            with self._lock:
+                self._strategy_mode = strategy_mode
+
+        # Everything downstream of the same bar is the same decision, so the
+        # cache key is the market state plus only those user-side inputs that
+        # genuinely change the answer.
+        from decision_engine.decision_cache import (
+            make_key, pnl_bucket, position_bucket,
+        )
+        _pos = self.portfolio.positions.get(ticker)
+        _cache_ttl = 270.0 if used_interval == "5m" else 1800.0
+        _shared_key_parts = dict(
+            v=1,
+            ticker=ticker,
+            interval=used_interval,
+            bar=self._bar_stamp(snap),
+            mode=strategy_mode,
+            risk=risk_profile,
+        )
 
         verdict = None
         if strategy_mode in ("COMMITTEE", "HYBRID", "BOARDROOM"):
@@ -959,21 +1175,36 @@ class LiveTradingEngine:
                        "🪑 Boardroom convening — 4 analysts studying "
                        "their briefing packets…", level="INFO")
             try:
-                if self._boardroom is None:
-                    from decision_engine.boardroom import AnalystBoardroom
-                    llm = getattr(self._engine, "llm", None)
-                    if llm is None:
-                        raise RuntimeError("AI engine exposes no LLM")
-                    self._boardroom = AnalystBoardroom(llm)
-
                 pos = self.portfolio.positions.get(ticker)
-                ruling = self._boardroom.convene(
-                    snap, verdict=verdict,
-                    in_position=pos is not None,
-                    entry_price=(float(pos.avg_entry_price)
-                                 if pos is not None else None),
-                    risk_profile=risk_profile,
-                    daily_pnl_pct=self.portfolio.get_daily_pnl_pct(),
+                daily_pnl = self.portfolio.get_daily_pnl_pct()
+
+                def _convene():
+                    board = self._get_boardroom()
+                    return board.convene(
+                        snap, verdict=verdict,
+                        in_position=pos is not None,
+                        entry_price=(float(pos.avg_entry_price)
+                                     if pos is not None else None),
+                        risk_profile=risk_profile,
+                        daily_pnl_pct=daily_pnl,
+                    )
+
+                # Nine calls a cycle makes this the one path where sharing
+                # matters most: every user on this symbol and bar rides the
+                # same meeting.
+                ruling = self._shared_decision(
+                    make_key(
+                        **_shared_key_parts,
+                        pos=position_bucket(
+                            pos is not None,
+                            float(pos.unrealized_pnl_pct) if pos else None),
+                        dpnl=pnl_bucket(daily_pnl),
+                        votes=(verdict.score if verdict is not None else None),
+                    ),
+                    ttl=_cache_ttl,
+                    compute=_convene,
+                    mode="BOARDROOM",
+                    ticker=ticker,
                 )
                 decision = ruling.decision
             except Exception as exc:
@@ -1026,9 +1257,16 @@ class LiveTradingEngine:
                 f"disagree explicitly in your reasoning, and explain why."
             )
             try:
-                ai_dec = self._engine.evaluate_market(
-                    snap, retrieval, risk_profile=risk_profile,
-                    extra_context=committee_ctx,
+                ai_dec = self._shared_decision(
+                    make_key(**_shared_key_parts,
+                             votes=(verdict.score if verdict is not None else None)),
+                    ttl=_cache_ttl,
+                    compute=lambda: self._ai_engine().evaluate_market(
+                        snap, retrieval, risk_profile=risk_profile,
+                        extra_context=committee_ctx,
+                    ),
+                    mode="HYBRID",
+                    ticker=ticker,
                 )
             except Exception as exc:
                 self._emit(PulseStage.ERROR, f"AI engine failed: {exc}",
@@ -1068,8 +1306,14 @@ class LiveTradingEngine:
                        f"Claude analysing ({len(retrieval.chunks)} chunks, "
                        f"{risk_profile})…", level="INFO")
             try:
-                decision = self._engine.evaluate_market(
-                    snap, retrieval, risk_profile=risk_profile,
+                decision = self._shared_decision(
+                    make_key(**_shared_key_parts),
+                    ttl=_cache_ttl,
+                    compute=lambda: self._ai_engine().evaluate_market(
+                        snap, retrieval, risk_profile=risk_profile,
+                    ),
+                    mode="AI",
+                    ticker=ticker,
                 )
             except Exception as exc:
                 self._emit(PulseStage.ERROR, f"AI engine failed: {exc}",

@@ -21,7 +21,12 @@ from config.user_profile import UserProfile
 from portfolio.virtual_account import LivePortfolio
 
 # ── Constants ────────────────────────────────────────────────────────────────
-PROFILE_PATH    = ROOT / "data" / "user_profile.json"
+#: Pre-multi-user profile location. Kept only so an existing deployment's
+#: settings are adopted once into that account's own file — see
+#: ``_load_profile_for``. Nothing writes here any more.
+LEGACY_PROFILE_PATH = ROOT / "data" / "user_profile.json"
+#: Back-compat alias for any page still importing the old name.
+PROFILE_PATH    = LEGACY_PROFILE_PATH
 DEFAULT_TICKERS = ["BTC-USD", "ETH-USD", "SOL-USD", "QQQ", "SPY",
                    "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META"]
 RISK_CHOICES    = ["Conservative", "Balanced", "Aggressive", "Micro-Scalp"]
@@ -485,33 +490,118 @@ hr {{ border-color:{BORDER} !important; margin:0.4rem 0 !important; }}
 
 def apply_theme() -> None:
     st.markdown(_THEME_CSS, unsafe_allow_html=True)
-    # Auth gate — no-op when BOTTRADE_AUTH_PASSWORD_HASH is unset (local dev).
-    # When set, halts page rendering with a login form until the user authenticates.
-    try:
-        from dashboard._auth import require_auth, render_logout_button
-        require_auth()
-        render_logout_button()
-    except Exception:
-        # Auth must never be a deploy-blocker — fall through silently.
-        pass
+    # Identity gate. Halts the page with a sign-in screen in `oidc` mode, falls
+    # back to the legacy shared-password form in `password` mode, and is a
+    # no-op locally. See dashboard/_identity.py.
+    from dashboard._identity import render_account_chip, require_login
+    require_login()
+    render_account_chip()
+
+
+# ── Per-user profile storage ─────────────────────────────────────────────────
+def profile_path(account: str | None = None) -> Path:
+    """Where this account's trading profile lives.
+
+    Profiles used to be a single ``data/user_profile.json`` for the whole
+    deployment, which meant every visitor overwrote everyone else's capital,
+    risk profile and watchlist. They are now one file per account.
+    """
+    from dashboard._identity import account_slug
+    return ROOT / "data" / "profiles" / f"{account_slug(account)}.json"
+
+
+def _load_profile_for(account: str) -> UserProfile:
+    """Load an account's profile, adopting the legacy shared file exactly once.
+
+    An existing single-user deployment keeps its settings on the first sign-in
+    after the upgrade instead of silently resetting to defaults. The legacy
+    file is then renamed, so the *second* person to sign up starts from
+    defaults rather than inheriting a stranger's capital and watchlist —
+    leaving it in place would recreate the very leak this change removes.
+    """
+    path = profile_path(account)
+    if path.exists():
+        return UserProfile.load(path)
+
+    if LEGACY_PROFILE_PATH.exists():
+        adopted = UserProfile.load(LEGACY_PROFILE_PATH)
+        adopted.save(path)
+        try:
+            LEGACY_PROFILE_PATH.rename(
+                LEGACY_PROFILE_PATH.with_suffix(".json.migrated"))
+        except OSError:
+            # Losing the rename only means the next new account inherits it
+            # too; not worth failing a page render over.
+            from utils.logger import get_logger
+            get_logger(__name__).warning(
+                "Could not retire legacy profile at %s", LEGACY_PROFILE_PATH)
+        return adopted
+
+    return UserProfile.load(path)
+
+
+#: Session-state keys that belong to one person and must never survive a
+#: change of account inside the same browser session.
+_USER_SCOPED_KEYS = (
+    # The engine itself is NOT here — it lives in trading.registry, keyed by
+    # account, and outlives any one session on purpose.
+    "portfolio", "_event_log", "bot_logs",
+    "starting_capital", "trade_size_pct", "risk_profile", "watchlist",
+    "daily_target_pct", "daily_loss_limit_pct",
+    "ticker_sel", "ticker_custom", "strategy_mode", "interval_sec",
+)
+
+
+def _reset_user_scoped_state() -> None:
+    """Wipe one person's session state when a different account signs in.
+
+    Signing out and back in as someone else in the same browser must not hand
+    over the previous person's portfolio, watchlist or API key.
+
+    It deliberately does *not* stop the previous account's bot. That engine is
+    owned by :mod:`trading.registry` under its own account id, not by this
+    session — it is still reachable, still checkpointing to its owner's
+    portfolio file, and stopping it here would halt a stranger's trading just
+    because someone else signed in on their laptop. Stopping a bot is what the
+    STOP button is for.
+    """
+    for key in (*_USER_SCOPED_KEYS, _USER_KEY_SLOT):
+        st.session_state.pop(key, None)
+    st.session_state.pop("_profile_loaded", None)
+    st.session_state.pop("_engine_capacity_error", None)
 
 
 # ── Session state bootstrap ──────────────────────────────────────────────────
 def ensure_profile_in_session() -> None:
-    if "_profile_loaded" in st.session_state:
+    """Load the current account's profile into session state.
+
+    Reloads whenever the signed-in account changes, so signing out and back in
+    as someone else inside one browser session cannot carry the previous
+    person's capital or watchlist across.
+    """
+    from dashboard._identity import account_id as _account_id
+    account = _account_id()
+    previous = st.session_state.get("_profile_account")
+    if previous == account:
         return
-    p = UserProfile.load(PROFILE_PATH)
+    if previous is not None:
+        _reset_user_scoped_state()
+
+    p = _load_profile_for(account)
     st.session_state["starting_capital"]     = int(p.capital)
     st.session_state["trade_size_pct"]       = int(p.trade_size_pct)
     st.session_state["risk_profile"]         = p.risk_profile
     st.session_state["watchlist"]            = list(p.watchlist)
     st.session_state["daily_target_pct"]     = float(p.daily_target_pct)
     st.session_state["daily_loss_limit_pct"] = float(p.daily_loss_limit_pct)
+    st.session_state["_profile_account"]     = account
     st.session_state["_profile_loaded"]      = True
 
 
 def save_profile() -> None:
-    existing = UserProfile.load(PROFILE_PATH)
+    from dashboard._identity import account_id as _account_id
+    account = _account_id()
+    existing = _load_profile_for(account)
     UserProfile(
         capital=float(st.session_state.get("starting_capital", 10_000)),
         trade_size_pct=int(st.session_state.get("trade_size_pct", 20)),
@@ -523,7 +613,7 @@ def save_profile() -> None:
         daily_loss_limit_pct=float(
             st.session_state.get("daily_loss_limit_pct", existing.daily_loss_limit_pct)
         ),
-    ).save(PROFILE_PATH)
+    ).save(profile_path(account))
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -551,12 +641,59 @@ def validate_ticker_symbol(ticker: str) -> tuple[bool, str]:
     return True, "Ticker verified."
 
 
+# ── Per-user portfolio persistence ───────────────────────────────────────────
+def portfolio_path(account: str | None = None) -> Path:
+    """Where this account's virtual portfolio is stored."""
+    from dashboard._identity import account_slug
+    return ROOT / "data" / "portfolios" / f"{account_slug(account)}.json"
+
+
+def save_portfolio(portfolio=None, account: str | None = None) -> None:
+    """Write the portfolio to disk. Safe to call from any thread.
+
+    ``LivePortfolio.save`` writes temp-then-rename under its own lock, so a
+    save racing a trade cannot produce a half-written file.
+    """
+    from dashboard._identity import account_id as _account_id
+    port = portfolio if portfolio is not None else st.session_state.get("portfolio")
+    if port is None:
+        return
+    port.save(portfolio_path(account or _account_id()))
+
+
 def ensure_portfolio_in_session() -> None:
-    if st.session_state.get("portfolio") is None:
-        st.session_state["portfolio"] = LivePortfolio(
-            initial_capital=float(
-                st.session_state.get("starting_capital", 10_000)),
-        )
+    """Put this account's portfolio in session state, restoring it from disk.
+
+    Before this, the portfolio lived only in session state, so a refresh wiped
+    every open position and the whole trade history while the background
+    engine kept trading against a portfolio object nobody could see any more.
+    """
+    if st.session_state.get("portfolio") is not None:
+        return
+
+    from dashboard._identity import account_id as _account_id
+    account = _account_id()
+    path = portfolio_path(account)
+    if path.exists():
+        try:
+            st.session_state["portfolio"] = LivePortfolio.load(path)
+            return
+        except Exception as exc:                               # noqa: BLE001
+            # A corrupt or future-schema file must not lock the user out of
+            # their own dashboard. Keep it for forensics, start clean.
+            from utils.logger import get_logger
+            get_logger(__name__).warning(
+                "Could not load portfolio %s (%s) — starting a fresh one",
+                path, exc)
+            try:
+                path.rename(path.with_suffix(".json.corrupt"))
+            except OSError:
+                pass
+
+    st.session_state["portfolio"] = LivePortfolio(
+        initial_capital=float(
+            st.session_state.get("starting_capital", 10_000)),
+    )
 
 
 # ── Pipeline singleton (shared across pages) ────────────────────────────────
@@ -579,22 +716,113 @@ def get_pipeline():
     return fetcher, retriever, engine
 
 
-# ── Live engine singleton ────────────────────────────────────────────────────
-def get_live_engine():
-    """One background engine per portfolio, kept across Streamlit reruns."""
-    ensure_portfolio_in_session()
-    eng = st.session_state.get("_live_engine")
+# ── Tenancy ──────────────────────────────────────────────────────────────────
+#: Where a user's own Anthropic key lives for the duration of their session.
+#: Session state only — never written to disk, never logged, never rendered
+#: unmasked. See ``saas.keyvault``.
+_USER_KEY_SLOT = "_bt_user_api_key"
+
+
+def account_id() -> str:
+    """The current visitor's stable account key.
+
+    Resolved by :mod:`dashboard._identity`: a real per-person id when OIDC
+    sign-in is configured, a single shared id behind the legacy password gate,
+    ``local`` otherwise. Everything per-user — trial budget, profile, ledger
+    attribution — keys off this one string.
+    """
+    from dashboard._identity import account_id as _account_id
+    return _account_id()
+
+
+def get_user_api_key() -> str:
+    return st.session_state.get(_USER_KEY_SLOT, "") or ""
+
+
+def set_user_api_key(key: str) -> None:
+    """Store (or clear) the visitor's own key for this session only."""
+    from saas import keyvault
+    st.session_state[_USER_KEY_SLOT] = keyvault.normalise(key)
+    # The engine cache is keyed by API key, so a rotation must not keep
+    # serving from an engine bound to the old one.
+    eng = current_engine()
     if eng is not None:
+        eng.set_tenant(get_tenant())
+
+
+def get_tenant():
+    """The current visitor's commercial context.
+
+    Rebuilt on every rerun — cheap by design; the ledger and engine cache
+    behind it are process-wide singletons.
+    """
+    from saas.tenant import Tenant
+    return Tenant(
+        account_id=account_id(),
+        user_api_key=get_user_api_key(),
+        model=None,
+    )
+
+
+# ── Live engine, owned by the process registry ───────────────────────────────
+def get_live_engine():
+    """This account's background engine, surviving refreshes and new tabs.
+
+    Ownership lives in :mod:`trading.registry`, not in session state. A
+    refresh reattaches to the bot that is already trading instead of dropping
+    the only reference to it and starting a second one on the same portfolio.
+
+    Returns ``None`` when the process is at its engine cap; callers should
+    surface :func:`engine_capacity_message` rather than crash.
+    """
+    from trading.registry import RegistryFullError, get_registry
+
+    ensure_portfolio_in_session()
+    account = account_id()
+    registry = get_registry()
+
+    def _build():
+        from trading.live_engine import LiveTradingEngine
+        fetcher, retriever, engine = get_pipeline()
+        eng = LiveTradingEngine(
+            portfolio=st.session_state["portfolio"],
+            fetcher=fetcher, retriever=retriever, engine=engine,
+            tenant=get_tenant(),
+        )
+        eng.set_persist_callback(
+            lambda port, _acct=account: save_portfolio(port, account=_acct))
         return eng
 
-    from trading.live_engine import LiveTradingEngine
-    fetcher, retriever, engine = get_pipeline()
-    eng = LiveTradingEngine(
-        portfolio=st.session_state["portfolio"],
-        fetcher=fetcher, retriever=retriever, engine=engine,
-    )
-    st.session_state["_live_engine"] = eng
+    try:
+        eng = registry.get_or_create(account, _build)
+    except RegistryFullError as exc:
+        st.session_state["_engine_capacity_error"] = str(exc)
+        return None
+
+    st.session_state.pop("_engine_capacity_error", None)
+    # The engine outlives the session, so the session must adopt the engine's
+    # portfolio rather than the other way round — otherwise the page would
+    # render a fresh empty portfolio while the bot trades a different object.
+    st.session_state["portfolio"] = eng.portfolio
+    # Entitlements move under a running bot (budget spent, key added), so
+    # refresh the tenant on every rerun rather than only at construction.
+    eng._tenant = get_tenant()              # noqa: SLF001 — same package
     return eng
+
+
+def engine_capacity_message() -> str:
+    """Why :func:`get_live_engine` returned ``None``, if it did."""
+    return st.session_state.get("_engine_capacity_error", "")
+
+
+def current_engine():
+    """This account's engine if it already exists, without building one.
+
+    For callers that only want to nudge a running bot (push a config change,
+    drain events) and must not spin one up as a side effect.
+    """
+    from trading.registry import get_registry
+    return get_registry().get(account_id())
 
 
 def ensure_event_buffer() -> None:
@@ -610,7 +838,7 @@ def ensure_logs_in_session() -> None:
 def pump_events() -> None:
     """Drain the engine's event queue into the page-local log buffer."""
     ensure_event_buffer()
-    eng = st.session_state.get("_live_engine")
+    eng = current_engine()
     if eng is None:
         return
     new = eng.drain_events()

@@ -51,6 +51,91 @@ form before any page renders.
 
 > **Local dev** — leave both unset. Auth is automatically skipped.
 
+> **One password is one account.** This gate controls *access*, not
+> *identity*: everyone who knows the password shares a single account,
+> a single trading profile, and a single free-tier budget. For a real
+> multi-user product, use section 2b instead.
+
+---
+
+## 2b. Per-person accounts (required for the free tier)
+
+BotTrade uses Streamlit's built-in OIDC sign-in (`st.login` / `st.user`).
+Streamlit owns the login cookie; BotTrade just reads the identity. This is
+what makes per-user budgets, per-user profiles and per-user billing real —
+identity survives a refresh, a new tab, and a restart.
+
+Without it the app still runs, but every visitor is one account, so the
+free-tier trial budget is a single shared pool that resets whenever someone
+clears their session. The Settings page says so out loud when this is the
+case.
+
+**1. Install the dependency**
+
+```bash
+pip install "Authlib>=1.3.2"
+```
+
+**2. Register an OAuth client**
+
+Google (free, ~10 minutes): console.cloud.google.com → *APIs & Services* →
+*Credentials* → *Create OAuth client ID* → *Web application*. Under
+*Authorised redirect URIs* add exactly the `redirect_uri` you will configure
+below — it must end in `/oauth2callback`.
+
+Want email+password signup as well as social login? Use Auth0 instead. It
+speaks OIDC, so nothing on the BotTrade side changes.
+
+**3. Write the secrets file**
+
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # cookie_secret
+```
+
+Fill in `client_id`, `client_secret`, `cookie_secret`, and set `redirect_uri`
+to your real origin in production (`https://yourdomain/oauth2callback`).
+`.streamlit/secrets.toml` is gitignored — keep it that way.
+
+**4. Restart**
+
+The dashboard now opens on a sign-in screen. After sign-in, each person gets:
+
+| Per user | Stored at |
+| --- | --- |
+| Trading profile — capital, risk, watchlist | `data/profiles/<account>.json` |
+| Virtual portfolio — cash, positions, trade history | `data/portfolios/<account>.json` |
+| API spend + trial budget | `data/usage.db`, keyed by account |
+| BYOK Anthropic key | session memory only — never written to disk |
+
+All of it survives a refresh, a new tab, and a process restart. Back up
+`data/` and you have backed up your users.
+
+**Migration note.** An existing single-user deployment has one
+`data/user_profile.json`. The first account to sign in adopts it, and the
+file is then renamed to `.json.migrated` so the second person to sign up
+starts from defaults instead of inheriting a stranger's capital and
+watchlist.
+
+### Live bots and capacity
+
+A running bot is a background thread owned by the *process*, not by a browser
+session (`trading/registry.py`), keyed by account. A refresh reattaches to the
+bot that is already trading instead of orphaning the thread and starting a
+second one on the same portfolio. The portfolio is checkpointed to disk after
+every cycle and once more when the loop exits, so a restart resumes with
+positions, cash and trade history intact.
+
+`BOTTRADE_MAX_LIVE_ENGINES` (default 25) caps concurrent live bots. When full,
+a **new** bot is refused — an existing one is never evicted, because evicting
+means silently stopping someone's trading and leaving their stop-loss
+unwatched. Users already holding an engine always reattach, however full the
+process is. Everything except the live loop (backtests, Committee Lab,
+analytics) keeps working at capacity.
+
+This is a single Python process, so a few dozen live bots is the realistic
+ceiling. Past that, the trading loops need to move to a separate worker.
+
 ---
 
 ## 3. Docker (recommended)
@@ -197,12 +282,22 @@ container if it fails 3 times in a row.
 Before pointing real eyeballs at the URL:
 
 - [ ] `BOTTRADE_ENV=production` set
-- [ ] `BOTTRADE_AUTH_PASSWORD_HASH` + `BOTTRADE_AUTH_HASH_SALT` set
+- [ ] Sign-in configured — `[auth]` in `.streamlit/secrets.toml`
+      (section 2b). Required before exposing the free tier; the shared
+      password gate alone cannot enforce a per-user budget
+- [ ] `redirect_uri` points at the real HTTPS origin, and the same URI is
+      registered with the OAuth provider
+- [ ] `cookie_secret` is a fresh random string, not the example value
+- [ ] `.streamlit/secrets.toml` and `data/usage.db` excluded from the image
+      and from git
+- [ ] `BOTTRADE_FREE_BUDGET_USD` set deliberately (`0` disables trial credit)
 - [ ] Telegram or webhook notifications configured under *Settings*
 - [ ] HTTPS in front of the container (Caddy / Cloudflare Tunnel /
       managed-host TLS)
 - [ ] `data/` and `logs/` mounted on persistent storage
-- [ ] Backup script for `data/virtual_portfolio.json`
+- [ ] Backup covers `data/profiles/`, `data/portfolios/` and
+      `data/usage.db` — these are your users' accounts and billing
+- [ ] `BOTTRADE_MAX_LIVE_ENGINES` matched to the host's capacity
 - [ ] Tested *Panic Stop* on a fresh trade (it really closes positions)
 - [ ] Reviewed Conservative / Balanced / Aggressive risk envelopes —
       they cap position size + circuit breakers
