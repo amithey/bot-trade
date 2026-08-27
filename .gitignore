@@ -43,5 +43,19 @@ Thumbs.db
 # Runtime artifacts (never commit — contain personal trading data)
 logs/
 data/user_profile.json
+data/user_profile.json.migrated
 data/yfinance_cache/
 data/ml_models/*.joblib
+
+# Per-account API usage ledger (saas.ledger) — user billing data,
+# regenerated on demand. Never commit.
+data/usage.db
+data/usage.db-shm
+data/usage.db-wal
+
+# Streamlit secrets — holds the OIDC client_secret and cookie_secret.
+# Never commit. See DEPLOY.md for the [auth] block it must contain.
+.streamlit/secrets.toml
+
+# Per-account trading profiles (dashboard/_shared.py: profile_path)
+data/profiles/

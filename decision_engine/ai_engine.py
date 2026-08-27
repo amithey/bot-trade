@@ -300,6 +300,16 @@ class AITradingEngine:
     temperature:
         Sampling temperature.  ``0.1`` for near-deterministic output with
         minimal variance.
+    api_key:
+        Anthropic key to bill this engine's calls to.  When omitted the
+        operator's ``ANTHROPIC_API_KEY`` is used.  Multi-tenant callers pass
+        the subscriber's own key here so tokens bill to their account — see
+        :func:`saas.tenant.engine_for_key`, which builds one engine per key.
+    callbacks:
+        LangChain callback handlers attached to the chat model.  The platform
+        passes a :class:`~saas.meter.UsageMeter` so every call this engine
+        makes — including the boardroom's parallel analyst calls — is priced
+        and attributed without any call site having to know about billing.
     """
 
     _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -308,6 +318,8 @@ class AITradingEngine:
         self,
         model: Optional[str] = None,
         temperature: float = 0.1,
+        api_key: Optional[str] = None,
+        callbacks: Optional[list] = None,
     ) -> None:
         # Resolution order: explicit arg → LLM_MODEL from .env → hard-coded default.
         # This ensures changing LLM_MODEL in .env actually takes effect.
@@ -319,22 +331,28 @@ class AITradingEngine:
         # very first Streamlit worker spin-up on Windows/OneDrive paths).
         load_dotenv(find_dotenv(usecwd=False), override=True)
 
-        _raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        # An explicit key (a subscriber's own, in the hosted product) wins
+        # over the operator's environment key.
+        _raw_key = (api_key or "").strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+        self._byok = bool((api_key or "").strip())
         if not _raw_key:
             logger.error(
-                "[AIEngine] ANTHROPIC_API_KEY not found in environment. "
-                "Add it to your .env at the project root."
+                "[AIEngine] No Anthropic API key available. Add one to your "
+                ".env at the project root, or supply one per user."
             )
 
-        # api_key is passed explicitly from os.environ so LangChain never
-        # has to guess — empty string falls through to Anthropic's own error.
+        # api_key is passed explicitly so LangChain never has to guess —
+        # empty string falls through to Anthropic's own error.
         self.llm = ChatAnthropic(
             model=self._model,
             temperature=temperature,
             api_key=_raw_key,
             max_retries=0,
             timeout=20.0,
+            callbacks=list(callbacks) if callbacks else None,
         )
+        #: Set by :func:`saas.tenant.engine_for_key`; ``None`` in single-user mode.
+        self.usage_meter = None
         self.structured_llm = self.llm.with_structured_output(TradingDecision)
 
         # Shared news fetcher with 10-minute TTL cache so AUTO loops
