@@ -543,7 +543,9 @@ def _load_profile_for(account: str) -> UserProfile:
 #: Session-state keys that belong to one person and must never survive a
 #: change of account inside the same browser session.
 _USER_SCOPED_KEYS = (
-    "portfolio", "_live_engine", "_event_log", "bot_logs",
+    # The engine itself is NOT here — it lives in trading.registry, keyed by
+    # account, and outlives any one session on purpose.
+    "portfolio", "_event_log", "bot_logs",
     "starting_capital", "trade_size_pct", "risk_profile", "watchlist",
     "daily_target_pct", "daily_loss_limit_pct",
     "ticker_sel", "ticker_custom", "strategy_mode", "interval_sec",
@@ -553,21 +555,20 @@ _USER_SCOPED_KEYS = (
 def _reset_user_scoped_state() -> None:
     """Wipe one person's session state when a different account signs in.
 
-    Signing out and back in as someone else inside a single browser session
-    must not hand over the previous person's portfolio, their API key, or a
-    live bot still trading on their behalf. The engine is stopped first —
-    dropping the reference alone would leave an orphaned daemon thread
-    trading with nobody watching.
+    Signing out and back in as someone else in the same browser must not hand
+    over the previous person's portfolio, watchlist or API key.
+
+    It deliberately does *not* stop the previous account's bot. That engine is
+    owned by :mod:`trading.registry` under its own account id, not by this
+    session — it is still reachable, still checkpointing to its owner's
+    portfolio file, and stopping it here would halt a stranger's trading just
+    because someone else signed in on their laptop. Stopping a bot is what the
+    STOP button is for.
     """
-    eng = st.session_state.get("_live_engine")
-    if eng is not None:
-        try:
-            eng.stop()
-        except Exception:                                      # noqa: BLE001
-            pass
     for key in (*_USER_SCOPED_KEYS, _USER_KEY_SLOT):
         st.session_state.pop(key, None)
     st.session_state.pop("_profile_loaded", None)
+    st.session_state.pop("_engine_capacity_error", None)
 
 
 # ── Session state bootstrap ──────────────────────────────────────────────────
@@ -640,12 +641,59 @@ def validate_ticker_symbol(ticker: str) -> tuple[bool, str]:
     return True, "Ticker verified."
 
 
+# ── Per-user portfolio persistence ───────────────────────────────────────────
+def portfolio_path(account: str | None = None) -> Path:
+    """Where this account's virtual portfolio is stored."""
+    from dashboard._identity import account_slug
+    return ROOT / "data" / "portfolios" / f"{account_slug(account)}.json"
+
+
+def save_portfolio(portfolio=None, account: str | None = None) -> None:
+    """Write the portfolio to disk. Safe to call from any thread.
+
+    ``LivePortfolio.save`` writes temp-then-rename under its own lock, so a
+    save racing a trade cannot produce a half-written file.
+    """
+    from dashboard._identity import account_id as _account_id
+    port = portfolio if portfolio is not None else st.session_state.get("portfolio")
+    if port is None:
+        return
+    port.save(portfolio_path(account or _account_id()))
+
+
 def ensure_portfolio_in_session() -> None:
-    if st.session_state.get("portfolio") is None:
-        st.session_state["portfolio"] = LivePortfolio(
-            initial_capital=float(
-                st.session_state.get("starting_capital", 10_000)),
-        )
+    """Put this account's portfolio in session state, restoring it from disk.
+
+    Before this, the portfolio lived only in session state, so a refresh wiped
+    every open position and the whole trade history while the background
+    engine kept trading against a portfolio object nobody could see any more.
+    """
+    if st.session_state.get("portfolio") is not None:
+        return
+
+    from dashboard._identity import account_id as _account_id
+    account = _account_id()
+    path = portfolio_path(account)
+    if path.exists():
+        try:
+            st.session_state["portfolio"] = LivePortfolio.load(path)
+            return
+        except Exception as exc:                               # noqa: BLE001
+            # A corrupt or future-schema file must not lock the user out of
+            # their own dashboard. Keep it for forensics, start clean.
+            from utils.logger import get_logger
+            get_logger(__name__).warning(
+                "Could not load portfolio %s (%s) — starting a fresh one",
+                path, exc)
+            try:
+                path.rename(path.with_suffix(".json.corrupt"))
+            except OSError:
+                pass
+
+    st.session_state["portfolio"] = LivePortfolio(
+        initial_capital=float(
+            st.session_state.get("starting_capital", 10_000)),
+    )
 
 
 # ── Pipeline singleton (shared across pages) ────────────────────────────────
@@ -697,7 +745,7 @@ def set_user_api_key(key: str) -> None:
     st.session_state[_USER_KEY_SLOT] = keyvault.normalise(key)
     # The engine cache is keyed by API key, so a rotation must not keep
     # serving from an engine bound to the old one.
-    eng = st.session_state.get("_live_engine")
+    eng = current_engine()
     if eng is not None:
         eng.set_tenant(get_tenant())
 
@@ -716,26 +764,65 @@ def get_tenant():
     )
 
 
-# ── Live engine singleton ────────────────────────────────────────────────────
+# ── Live engine, owned by the process registry ───────────────────────────────
 def get_live_engine():
-    """One background engine per portfolio, kept across Streamlit reruns."""
+    """This account's background engine, surviving refreshes and new tabs.
+
+    Ownership lives in :mod:`trading.registry`, not in session state. A
+    refresh reattaches to the bot that is already trading instead of dropping
+    the only reference to it and starting a second one on the same portfolio.
+
+    Returns ``None`` when the process is at its engine cap; callers should
+    surface :func:`engine_capacity_message` rather than crash.
+    """
+    from trading.registry import RegistryFullError, get_registry
+
     ensure_portfolio_in_session()
-    eng = st.session_state.get("_live_engine")
-    if eng is not None:
-        # Entitlements move under a running bot (budget spent, key added), so
-        # refresh the tenant on every rerun rather than only at construction.
-        eng._tenant = get_tenant()          # noqa: SLF001 — same package
+    account = account_id()
+    registry = get_registry()
+
+    def _build():
+        from trading.live_engine import LiveTradingEngine
+        fetcher, retriever, engine = get_pipeline()
+        eng = LiveTradingEngine(
+            portfolio=st.session_state["portfolio"],
+            fetcher=fetcher, retriever=retriever, engine=engine,
+            tenant=get_tenant(),
+        )
+        eng.set_persist_callback(
+            lambda port, _acct=account: save_portfolio(port, account=_acct))
         return eng
 
-    from trading.live_engine import LiveTradingEngine
-    fetcher, retriever, engine = get_pipeline()
-    eng = LiveTradingEngine(
-        portfolio=st.session_state["portfolio"],
-        fetcher=fetcher, retriever=retriever, engine=engine,
-        tenant=get_tenant(),
-    )
-    st.session_state["_live_engine"] = eng
+    try:
+        eng = registry.get_or_create(account, _build)
+    except RegistryFullError as exc:
+        st.session_state["_engine_capacity_error"] = str(exc)
+        return None
+
+    st.session_state.pop("_engine_capacity_error", None)
+    # The engine outlives the session, so the session must adopt the engine's
+    # portfolio rather than the other way round — otherwise the page would
+    # render a fresh empty portfolio while the bot trades a different object.
+    st.session_state["portfolio"] = eng.portfolio
+    # Entitlements move under a running bot (budget spent, key added), so
+    # refresh the tenant on every rerun rather than only at construction.
+    eng._tenant = get_tenant()              # noqa: SLF001 — same package
     return eng
+
+
+def engine_capacity_message() -> str:
+    """Why :func:`get_live_engine` returned ``None``, if it did."""
+    return st.session_state.get("_engine_capacity_error", "")
+
+
+def current_engine():
+    """This account's engine if it already exists, without building one.
+
+    For callers that only want to nudge a running bot (push a config change,
+    drain events) and must not spin one up as a side effect.
+    """
+    from trading.registry import get_registry
+    return get_registry().get(account_id())
 
 
 def ensure_event_buffer() -> None:
@@ -751,7 +838,7 @@ def ensure_logs_in_session() -> None:
 def pump_events() -> None:
     """Drain the engine's event queue into the page-local log buffer."""
     ensure_event_buffer()
-    eng = st.session_state.get("_live_engine")
+    eng = current_engine()
     if eng is None:
         return
     new = eng.drain_events()

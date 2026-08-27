@@ -30,9 +30,10 @@ from streamlit_autorefresh import st_autorefresh
 from dashboard._shared import (
     BG_DEEP, BG_PANEL, BORDER, C_BUY, C_HOLD, C_SELL, CUSTOM_LABEL, CYAN,
     DEFAULT_TICKERS, GRID, RISK_CHOICES, TEXT, TEXT_DIM, TEXT_HI,
+    account_id as _account_id,
     apply_theme, ensure_event_buffer, ensure_portfolio_in_session,
-    ensure_profile_in_session, get_live_engine, get_tenant, pump_events,
-    save_profile,
+    ensure_profile_in_session, engine_capacity_message, get_live_engine,
+    get_tenant, pump_events, save_portfolio, save_profile,
 )
 from saas.plans import Funding as _Funding
 from saas.pricing import format_usd as _fmt_usd
@@ -85,6 +86,19 @@ _platform_key_ok = (_raw_key.startswith("sk-ant-")
 # Engine + auto-refresh
 # ─────────────────────────────────────────────────────────────────────────────
 engine = get_live_engine()
+if engine is None:
+    # The process is at its live-bot ceiling. Refusing a new bot is the
+    # correct outcome — the alternative is evicting someone else's running
+    # engine and leaving their stop-loss unwatched.
+    st.error(engine_capacity_message() or
+             "No live-bot slots are free on this deployment right now.")
+    st.caption(
+        "Backtesting, the Committee Lab and every analysis page still work — "
+        "only the live loop is capped. Raise `BOTTRADE_MAX_LIVE_ENGINES` if "
+        "this host has the headroom."
+    )
+    st.stop()
+
 pump_events()
 
 # 2-second refresh gives a "live heartbeat" feel without overloading Claude
@@ -337,9 +351,15 @@ with c_start:
 with c_reset:
     if st.button("RESET", use_container_width=True, help="Reset portfolio"):
         from portfolio.virtual_account import LivePortfolio
-        st.session_state["portfolio"] = LivePortfolio(
+        from trading.registry import get_registry
+        # Stop and drop the engine first: it holds a reference to the old
+        # portfolio and would otherwise keep checkpointing it back over the
+        # fresh one. get_live_engine() rebuilds on the next run.
+        get_registry().stop(_account_id())
+        fresh = LivePortfolio(
             initial_capital=float(st.session_state["starting_capital"]))
-        st.session_state["_live_engine"] = None   # rebuild with new portfolio
+        st.session_state["portfolio"] = fresh
+        save_portfolio(fresh)
         st.rerun()
 
 # Keep engine config in sync with widgets + settings even while running

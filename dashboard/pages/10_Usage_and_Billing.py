@@ -29,6 +29,7 @@ from decision_engine.decision_cache import get_decision_cache
 from saas.ledger import get_ledger
 from saas.plans import CALLS_PER_CYCLE, Funding
 from saas.pricing import cost_usd, format_usd, format_usd_md
+from trading.registry import get_registry
 
 st.set_page_config(page_title="BotTrade - Usage", page_icon=":material/receipt_long:",
                    layout="wide", initial_sidebar_state="expanded")
@@ -90,6 +91,38 @@ if stats["coalesced"]:
         f"{stats['coalesced']:,} of those were concurrent requests that "
         f"arrived while the same decision was already being computed — they "
         f"waited for it rather than firing their own call."
+    )
+
+st.markdown("---")
+
+# ── Live bot capacity ───────────────────────────────────────────────────────
+st.markdown("##### Live bots on this deployment")
+st.caption(
+    "Each live bot is a background thread owned by the process, not by your "
+    "browser tab — a refresh reattaches to the bot already running rather "
+    "than starting a second one. When every slot is taken a new bot is "
+    "refused; an existing one is never evicted."
+)
+
+_reg = get_registry().snapshot()
+r1, r2, r3 = st.columns(3)
+r1.metric("Running now", f"{_reg['running']}")
+r2.metric("Slots held", f"{_reg['held']} / {_reg['max']}")
+r3.metric("Free slots", f"{max(0, _reg['max'] - _reg['held'])}")
+
+if _reg["held"] >= _reg["max"]:
+    st.warning(
+        "Every live-bot slot is in use. New bots will be refused until one "
+        "stops. Raise `BOTTRADE_MAX_LIVE_ENGINES` if this host has headroom.",
+        icon="🚦",
+    )
+
+_mine = next((a for a in _reg["accounts"] if a["account"] == tenant.account_id),
+             None)
+if _mine:
+    st.caption(
+        f"Your bot: **{_mine['mode'] or '—'}** on **{_mine['ticker'] or '—'}** · "
+        f"{'running' if _mine['running'] else 'stopped'}"
     )
 
 st.markdown("---")

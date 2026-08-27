@@ -15,7 +15,8 @@ if str(_ROOT) not in _sys.path:
 from dashboard._identity import account_id, auth_mode, identifies_individuals
 from dashboard._shared import (
     DEFAULT_TICKERS, RISK_CHOICES,
-    apply_theme, ensure_profile_in_session, get_tenant, get_user_api_key,
+    apply_theme, current_engine, ensure_profile_in_session, get_tenant,
+    get_user_api_key,
     save_profile, set_user_api_key, validate_ticker_symbol,
 )
 from saas import keyvault
@@ -224,7 +225,7 @@ if (new_target != prev_target) or (loss_limit != prev_loss):
     # would reset capital and watchlist to defaults on a brand-new account.
     save_profile()
     # Also push live to a running engine
-    eng = st.session_state.get("_live_engine")
+    eng = current_engine()
     if eng is not None:
         eng.set_config(daily_target_pct=new_target,
                        daily_loss_limit_pct=float(loss_limit))
@@ -372,7 +373,7 @@ new_cfg = NotificationConfig(
 # Save + push to live engine on any change
 if new_cfg.to_dict() != _ncfg.to_dict():
     new_cfg.save()
-    eng = st.session_state.get("_live_engine")
+    eng = current_engine()
     if eng is not None:
         try:
             eng.update_notifier_config(new_cfg)

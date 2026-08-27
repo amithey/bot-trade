@@ -15,7 +15,8 @@ if str(_ROOT) not in _sys.path:
 
 from dashboard._shared import (
     BG, C_BUY, C_SELL, GRID,
-    apply_theme, ensure_logs_in_session, ensure_portfolio_in_session,
+    apply_theme, current_engine, ensure_logs_in_session,
+    ensure_portfolio_in_session,
     ensure_profile_in_session, pump_toasts,
 )
 
@@ -60,7 +61,7 @@ k6.metric("Profit Factor",
 st.markdown("---")
 
 # ── Safety controls ─────────────────────────────────────────────────────────
-_engine = st.session_state.get("_live_engine")
+_engine = current_engine()
 if _engine is not None:
     try:
         _sstat = _engine.get_safety_status()

@@ -254,38 +254,27 @@ def test_profile_round_trips_through_json(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 # Session isolation
 # --------------------------------------------------------------------------- #
-class _FakeEngine:
-    def __init__(self):
-        self.stopped = False
-
-    def stop(self):
-        self.stopped = True
-
-
-def test_switching_account_stops_the_bot_and_clears_the_key():
+def test_switching_account_clears_the_previous_users_session_data():
     from dashboard import _shared
-    eng = _FakeEngine()
-    st.session_state["_live_engine"] = eng
     st.session_state["portfolio"] = object()
     st.session_state[_shared._USER_KEY_SLOT] = "sk-ant-api03-" + "a" * 40
     st.session_state["watchlist"] = ["BTC-USD"]
+    st.session_state["starting_capital"] = 999_999
 
     _shared._reset_user_scoped_state()
 
-    assert eng.stopped, "an orphaned bot would keep trading for the previous user"
     assert "portfolio" not in st.session_state
-    assert "_live_engine" not in st.session_state
-    assert _shared._USER_KEY_SLOT not in st.session_state
+    assert _shared._USER_KEY_SLOT not in st.session_state, \
+        "one person's API key must never reach the next person to sign in"
     assert "watchlist" not in st.session_state
+    assert "starting_capital" not in st.session_state
 
 
-def test_reset_tolerates_an_engine_that_fails_to_stop():
+def test_the_engine_is_not_session_scoped():
+    """The engine lives in the registry, so the reset must not try to own it.
+
+    Listing it among the session-scoped keys would be a claim that a refresh
+    can drop it — exactly the orphaned-thread bug the registry removes.
+    """
     from dashboard import _shared
-
-    class _Stubborn:
-        def stop(self):
-            raise RuntimeError("thread already gone")
-
-    st.session_state["_live_engine"] = _Stubborn()
-    _shared._reset_user_scoped_state()
-    assert "_live_engine" not in st.session_state
+    assert "_live_engine" not in _shared._USER_SCOPED_KEYS

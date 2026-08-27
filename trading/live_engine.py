@@ -84,6 +84,10 @@ class LiveTradingEngine:
         self._api_cycles:    int = 0    # cycles that actually called Claude
         self._cached_cycles: int = 0    # cycles served from the shared cache
 
+        # Set by the owner (see dashboard/_shared.get_live_engine) to persist
+        # the portfolio after every cycle. None → no persistence.
+        self._persist_cb = None
+
         # Config (settable while running via set_config)
         self._ticker         = "BTC-USD"
         self._strategy_mode  = "AI"   # AI | COMMITTEE | HYBRID | BOARDROOM
@@ -832,6 +836,11 @@ class LiveTradingEngine:
         try:
             while not self._stop_flag.is_set():
                 self._cycle_once()
+                # Checkpoint here rather than inside _cycle_once: the
+                # stop-loss and take-profit paths sell and then return early,
+                # so a save at the end of the cycle body would miss exactly
+                # the trades that matter most.
+                self._checkpoint()
                 if self._stop_flag.is_set():
                     break
                 # Sleep in short ticks so stop() is responsive
@@ -867,7 +876,34 @@ class LiveTradingEngine:
                        level="ERROR",
                        meta={"traceback": traceback.format_exc()})
         finally:
+            # A crashed or stopped loop still owes the user their trades.
+            self._checkpoint()
             self._emit(PulseStage.STOPPED, "Loop exited", level="WARN")
+
+    def _checkpoint(self) -> None:
+        """Persist the portfolio, if the owner gave us somewhere to put it.
+
+        Never raises: a disk problem must not take down a running bot, and
+        the next cycle will try again a few seconds later.
+        """
+        cb = self._persist_cb
+        if cb is None:
+            return
+        try:
+            cb(self.portfolio)
+        except Exception as exc:                               # noqa: BLE001
+            self._emit(PulseStage.ERROR,
+                       f"Could not save portfolio: {type(exc).__name__}",
+                       level="WARN")
+
+    def set_persist_callback(self, cb) -> None:
+        """Install the function that writes the portfolio to durable storage.
+
+        Called after every cycle and once more when the loop exits.  ``None``
+        disables persistence (single-user / test use).
+        """
+        with self._lock:
+            self._persist_cb = cb
 
     def _cycle_once(self) -> None:
         with self._lock:

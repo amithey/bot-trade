@@ -104,8 +104,12 @@ The dashboard now opens on a sign-in screen. After sign-in, each person gets:
 | Per user | Stored at |
 | --- | --- |
 | Trading profile — capital, risk, watchlist | `data/profiles/<account>.json` |
+| Virtual portfolio — cash, positions, trade history | `data/portfolios/<account>.json` |
 | API spend + trial budget | `data/usage.db`, keyed by account |
 | BYOK Anthropic key | session memory only — never written to disk |
+
+All of it survives a refresh, a new tab, and a process restart. Back up
+`data/` and you have backed up your users.
 
 **Migration note.** An existing single-user deployment has one
 `data/user_profile.json`. The first account to sign in adopts it, and the
@@ -113,9 +117,24 @@ file is then renamed to `.json.migrated` so the second person to sign up
 starts from defaults instead of inheriting a stranger's capital and
 watchlist.
 
-**Still session-scoped after this change:** the virtual portfolio and any
-running bot live in Streamlit session state, so a refresh still resets them.
-Persisting those per account is the next step.
+### Live bots and capacity
+
+A running bot is a background thread owned by the *process*, not by a browser
+session (`trading/registry.py`), keyed by account. A refresh reattaches to the
+bot that is already trading instead of orphaning the thread and starting a
+second one on the same portfolio. The portfolio is checkpointed to disk after
+every cycle and once more when the loop exits, so a restart resumes with
+positions, cash and trade history intact.
+
+`BOTTRADE_MAX_LIVE_ENGINES` (default 25) caps concurrent live bots. When full,
+a **new** bot is refused — an existing one is never evicted, because evicting
+means silently stopping someone's trading and leaving their stop-loss
+unwatched. Users already holding an engine always reattach, however full the
+process is. Everything except the live loop (backtests, Committee Lab,
+analytics) keeps working at capacity.
+
+This is a single Python process, so a few dozen live bots is the realistic
+ceiling. Past that, the trading loops need to move to a separate worker.
 
 ---
 
@@ -276,7 +295,9 @@ Before pointing real eyeballs at the URL:
 - [ ] HTTPS in front of the container (Caddy / Cloudflare Tunnel /
       managed-host TLS)
 - [ ] `data/` and `logs/` mounted on persistent storage
-- [ ] Backup script for `data/virtual_portfolio.json`
+- [ ] Backup covers `data/profiles/`, `data/portfolios/` and
+      `data/usage.db` — these are your users' accounts and billing
+- [ ] `BOTTRADE_MAX_LIVE_ENGINES` matched to the host's capacity
 - [ ] Tested *Panic Stop* on a fresh trade (it really closes positions)
 - [ ] Reviewed Conservative / Balanced / Aggressive risk envelopes —
       they cap position size + circuit breakers
