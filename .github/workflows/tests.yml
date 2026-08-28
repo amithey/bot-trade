@@ -1,0 +1,43 @@
+name: Tests
+
+# Runs the test suite on every push and every pull request, so a broken
+# commit is caught before it reaches main rather than at the next person's
+# `pytest` run. No secrets are required: every test that touches an
+# Anthropic key uses a fake one via monkeypatch, and nothing hits the
+# network or the real API.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+# A newer push on the same branch/PR cancels the run still in progress —
+# no reason to finish testing a commit that is already superseded.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          # Caches pip downloads keyed on the requirements files, so an
+          # unchanged dependency set reuses the cache instead of
+          # re-downloading torch/transformers/chromadb every run.
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q
