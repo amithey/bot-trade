@@ -14,15 +14,26 @@ orphaning it, and a user cannot accidentally run two.
 
 Capacity
 --------
-Every live bot is a thread doing network I/O in a single Streamlit process, so
-the number of them has to be bounded.  When the registry is full it **refuses
-to start a new bot** rather than evicting an existing one: evicting would mean
-silently stopping a stranger's trading, and a queue-jumping user is a far
-better outcome than someone's stop-loss no longer being watched.
+When the registry is full it **refuses to start a new bot** rather than
+evicting an existing one: evicting would mean silently stopping a stranger's
+trading, and a queue-jumping user is a far better outcome than someone's
+stop-loss no longer being watched.
 
-Set the ceiling with ``BOTTRADE_MAX_LIVE_ENGINES`` (default 25). It is a
-process-level guard, not a plan limit — per-plan symbol caps live in
+The ceiling is ``BOTTRADE_MAX_LIVE_ENGINES`` (default 100), a process-level
+guard rather than a plan limit — per-plan symbol caps live in
 :mod:`saas.plans`.
+
+The default is measured, not guessed. ``python -m tools.loadtest_engines``
+on the development machine gave a sustained ~7 cycles/second of CPU-bound
+work regardless of how many bots ran, and 55 KB of memory per idle engine.
+At a 30-second interval that is roughly 210 bots before CPU saturates, and
+memory does not become interesting until far beyond that; 100 leaves
+comfortable headroom on both.
+
+What that measurement does *not* cover, and what will actually bite first:
+thread scheduling under real network load, Yahoo Finance rate-limiting a
+host that fetches for a hundred symbols, and Anthropic rate limits in the
+AI modes. Re-run the tool on the real host before raising this.
 """
 from __future__ import annotations
 
@@ -34,7 +45,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_DEFAULT_MAX_ENGINES = 25
+_DEFAULT_MAX_ENGINES = 100
 
 
 class RegistryFullError(RuntimeError):

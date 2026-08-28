@@ -151,15 +151,31 @@ second one on the same portfolio. The portfolio is checkpointed to disk after
 every cycle and once more when the loop exits, so a restart resumes with
 positions, cash and trade history intact.
 
-`BOTTRADE_MAX_LIVE_ENGINES` (default 25) caps concurrent live bots. When full,
-a **new** bot is refused — an existing one is never evicted, because evicting
-means silently stopping someone's trading and leaving their stop-loss
+`BOTTRADE_MAX_LIVE_ENGINES` (default 100) caps concurrent live bots. When
+full, a **new** bot is refused — an existing one is never evicted, because
+evicting means silently stopping someone's trading and leaving their stop-loss
 unwatched. Users already holding an engine always reattach, however full the
 process is. Everything except the live loop (backtests, Committee Lab,
 analytics) keeps working at capacity.
 
-This is a single Python process, so a few dozen live bots is the realistic
-ceiling. Past that, the trading loops need to move to a separate worker.
+Measure before you change it:
+
+```bash
+python -m tools.loadtest_engines
+```
+
+It runs the CPU-bound half of a cycle (the 38-indicator vote plus portfolio
+bookkeeping) at several concurrency levels, using COMMITTEE mode so it costs
+nothing in API calls. On the development machine it sustained ~7 cycles per
+second regardless of bot count — the GIL, since the indicator maths is pure
+pandas/numpy — and 55 KB of memory per idle engine. At a 30-second interval
+that is ~210 bots before CPU saturates.
+
+So CPU and memory are *not* the first limits. What will bite first, and what
+the tool does not measure: Yahoo Finance rate-limiting a host fetching for a
+hundred symbols, Anthropic rate limits in the AI modes, and thread scheduling
+under real network load. Run the tool on the actual host, then set the cap
+below the level where p95 starts climbing.
 
 ---
 

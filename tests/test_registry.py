@@ -125,7 +125,8 @@ def test_max_engines_reads_env(monkeypatch):
     monkeypatch.setenv("BOTTRADE_MAX_LIVE_ENGINES", "7")
     assert max_engines() == 7
     monkeypatch.setenv("BOTTRADE_MAX_LIVE_ENGINES", "not-a-number")
-    assert max_engines() == 25
+    from trading.registry import _DEFAULT_MAX_ENGINES
+    assert max_engines() == _DEFAULT_MAX_ENGINES
     monkeypatch.setenv("BOTTRADE_MAX_LIVE_ENGINES", "0")
     assert max_engines() == 1
 
