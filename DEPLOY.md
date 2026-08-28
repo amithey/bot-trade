@@ -13,6 +13,18 @@ hosts, password auth, and crash reporting. For local dev, the
   - **Docker 24+** with the Compose plugin (recommended)
   - Or Python 3.11+ on the target host
 
+Running from source rather than Docker:
+
+```bash
+python -m venv .venv && . .venv/bin/activate    # Windows: .venv\Scriptsctivate
+pip install -r requirements.txt                  # runtime
+pip install -r requirements-dev.txt              # tests + linters, optional
+```
+
+Use a virtualenv. `requirements.txt` pins exact versions of the stack the
+test suite runs on, and installing it into a shared global Python will fight
+with whatever else lives there.
+
 ---
 
 ## 2. Configure environment
@@ -98,6 +110,13 @@ to your real origin in production (`https://yourdomain/oauth2callback`).
 `.streamlit/secrets.toml` is gitignored — keep it that way.
 
 **4. Restart**
+
+Running under Docker? `.streamlit/secrets.toml` is excluded from the image on
+purpose, so mount it at runtime — uncomment the secrets volume in
+`docker-compose.yml`. Create the file *before* starting: Docker silently
+creates a directory at a missing bind-mount source, which then breaks
+Streamlit.
+
 
 The dashboard now opens on a sign-in screen. After sign-in, each person gets:
 
@@ -298,6 +317,11 @@ Before pointing real eyeballs at the URL:
 - [ ] Backup covers `data/profiles/`, `data/portfolios/` and
       `data/usage.db` — these are your users' accounts and billing
 - [ ] `BOTTRADE_MAX_LIVE_ENGINES` matched to the host's capacity
+- [ ] `docker build` succeeded from a clean checkout — the image installs
+      exactly `requirements.txt`, so anything not pinned there is not
+      in production
+- [ ] Confirmed `.streamlit/secrets.toml` is NOT inside the built image
+      (`docker run --rm <image> ls -la /app/.streamlit`)
 - [ ] Tested *Panic Stop* on a fresh trade (it really closes positions)
 - [ ] Reviewed Conservative / Balanced / Aggressive risk envelopes —
       they cap position size + circuit breakers

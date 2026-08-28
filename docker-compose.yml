@@ -24,11 +24,18 @@ services:
     ports:
       - "${BOTTRADE_PORT:-8501}:8501"
     volumes:
-      # Persist user data across container rebuilds.
+      # Persist user data across container rebuilds. This is where accounts
+      # live: data/profiles/, data/portfolios/ and data/usage.db. Back it up.
       - ./data:/app/data
       - ./logs:/app/logs
       # Cache HuggingFace model weights so cold-start doesn't re-download.
       - hf_cache:/home/bottrade/.cache/huggingface
+      # OIDC sign-in credentials, mounted read-only at runtime rather than
+      # baked into the image (.dockerignore excludes them from the build).
+      # UNCOMMENT when using per-person sign-in (DEPLOY.md section 2b) — and
+      # only after the file exists: Docker silently creates a *directory* at
+      # a bind-mount source that is missing, which then breaks Streamlit.
+      # - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
       interval: 30s
