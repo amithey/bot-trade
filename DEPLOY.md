@@ -48,18 +48,24 @@ from the internet:
 
 | Key                              | Purpose                          |
 | -------------------------------- | -------------------------------- |
-| `BOTTRADE_AUTH_PASSWORD_HASH`    | SHA-256 hash — gates the UI       |
-| `BOTTRADE_AUTH_HASH_SALT`        | Per-deploy salt (any random str) |
+| `BOTTRADE_AUTH_PASSWORD_HASH`    | PBKDF2 hash — gates the UI        |
+| `BOTTRADE_AUTH_HASH_SALT`        | Legacy hashes only (see below)   |
 
 Generate a password hash:
 
 ```bash
-python -c "import hashlib; print(hashlib.sha256(b'MYSALT' + b'mypassword').hexdigest())"
+python -m dashboard._auth
 ```
 
-Then put the digest into `BOTTRADE_AUTH_PASSWORD_HASH` and the same
-salt into `BOTTRADE_AUTH_HASH_SALT`. The dashboard now shows a login
-form before any page renders.
+It prompts for the password twice and prints the line to paste into `.env`.
+The hash is PBKDF2-HMAC-SHA256 with a random salt baked into it, so
+`BOTTRADE_AUTH_HASH_SALT` is not needed for new hashes. The dashboard then
+shows a login form before any page renders.
+
+> **Upgrading from the old hash?** Bare SHA-256 digests (64 hex characters,
+> with the optional `BOTTRADE_AUTH_HASH_SALT`) still verify, so nothing breaks
+> on deploy — but a single unsalted SHA-256 round is cheap to brute-force. The
+> login screen flags it; rerun the command above to rotate.
 
 > **Local dev** — leave both unset. Auth is automatically skipped.
 
@@ -281,7 +287,7 @@ Stop the container, edit `.env`, restart:
 
 ```bash
 docker compose stop
-# update BOTTRADE_AUTH_PASSWORD_HASH in .env
+# regenerate with: python -m dashboard._auth, then update .env
 docker compose up -d
 ```
 
