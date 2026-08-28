@@ -75,6 +75,9 @@ def make_snapshot(n=120, ticker="TEST"):
 def boardroom(monkeypatch):
     b = AnalystBoardroom.__new__(AnalystBoardroom)
     b._llm = FakeLLM()
+    # Analysts and chairman can run on different models; this fixture points
+    # both at the same fake. See AnalystBoardroom.__init__.
+    b._chair_llm = b._llm
     b._vote_llm = b._llm.with_structured_output(AnalystVote)
     b._news = _FailingNews()
     return b
@@ -160,6 +163,7 @@ def test_convene_full_meeting(boardroom):
 
 def test_convene_chair_fallback(boardroom):
     boardroom._llm = FakeLLM(analyst_vote="SELL", chair_raises=True)
+    boardroom._chair_llm = boardroom._llm
     boardroom._vote_llm = boardroom._llm.with_structured_output(AnalystVote)
     ruling = boardroom.convene(make_snapshot(), verdict=None,
                                in_position=True, entry_price=90.0)

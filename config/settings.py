@@ -36,6 +36,27 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.0)
 
     # ------------------------------------------------------------------ #
+    # Boardroom: model per seat
+    # ------------------------------------------------------------------ #
+    # The boardroom fires ~9 calls per cycle: 8 analysts plus the chairman.
+    # Running all nine on one model means any upgrade multiplies by nine.
+    # Splitting them lets the chairman - the only seat whose output is
+    # binding - be as strong as you like while the analysts, who each
+    # produce one structured vote from a narrow packet, stay cheap.
+    #
+    # Both fall back to llm_model when unset, so a single-model setup keeps
+    # working exactly as before.
+    llm_model_analyst: Optional[str] = Field(
+        default=None,
+        description="Model for the 8 boardroom analysts. Defaults to LLM_MODEL.",
+    )
+    llm_model_chair: Optional[str] = Field(
+        default=None,
+        description="Model for the boardroom chairman, who casts the binding "
+                    "ruling. Defaults to LLM_MODEL.",
+    )
+
+    # ------------------------------------------------------------------ #
     # Embeddings (local sentence-transformers)
     # ------------------------------------------------------------------ #
     embedding_model: str = Field(
