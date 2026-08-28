@@ -262,9 +262,21 @@ class SafetyController:
         # WARN bands
         if consec >= max(1, cfg.max_consecutive_losses - 1) \
                 and cfg.max_consecutive_losses > 0:
+            if override_active and consec >= cfg.max_consecutive_losses:
+                # The streak already reached the breaker's threshold; only
+                # the override is keeping BUYs open. "one more triggers it"
+                # would be wrong here — it already did.
+                warn_reason = (
+                    f"{consec} consecutive losses would trigger the circuit "
+                    f"breaker, but a manual override is active."
+                )
+            else:
+                warn_reason = (
+                    f"{consec} consecutive losses — one more triggers the breaker."
+                )
             return SafetyStatus(
                 allow_buy=True, severity="WARN",
-                reason=f"{consec} consecutive losses — one more triggers the breaker.",
+                reason=warn_reason,
                 consecutive_losses=consec,
                 last_loss_at=last_loss_at,
                 cooldown_until=cooldown_until,
