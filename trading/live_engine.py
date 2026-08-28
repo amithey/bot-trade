@@ -88,6 +88,15 @@ class LiveTradingEngine:
         # the portfolio after every cycle. None → no persistence.
         self._persist_cb = None
 
+        # Quiet-market gate — skip paying for a fresh model call when the
+        # market has not moved enough for the answer to change.
+        self._quiet_skip_enabled: bool = True
+        self._quiet_price_pct: float = 0.10     # % move that forces a call
+        self._quiet_score_delta: float = 0.05   # committee-score move likewise
+        self._max_decision_age_sec: float = 900.0   # never coast past 15 min
+        self._last_ai_context: dict = {}
+        self._quiet_skips: int = 0
+
         # Config (settable while running via set_config)
         self._ticker         = "BTC-USD"
         self._strategy_mode  = "AI"   # AI | COMMITTEE | HYBRID | BOARDROOM
@@ -327,10 +336,23 @@ class LiveTradingEngine:
         llm = getattr(engine, "llm", None)
         if llm is None:
             raise RuntimeError("AI engine exposes no LLM")
-        if self._boardroom is None or self._boardroom_llm is not llm:
+
+        # Analysts and chairman may run on different models — see
+        # AnalystBoardroom and the LLM_MODEL_ANALYST / LLM_MODEL_CHAIR
+        # settings. Both default to the engine's own model.
+        from config.settings import settings
+        make = getattr(engine, "make_llm", None)
+        if make is not None:
+            analyst_llm = make(settings.llm_model_analyst)
+            chair_llm = make(settings.llm_model_chair)
+        else:                       # a stand-in engine in tests
+            analyst_llm = chair_llm = llm
+
+        if self._boardroom is None or self._boardroom_llm is not analyst_llm:
             from decision_engine.boardroom import AnalystBoardroom
-            self._boardroom = AnalystBoardroom(llm)
-            self._boardroom_llm = llm
+            self._boardroom = AnalystBoardroom(analyst_llm,
+                                               chair_llm=chair_llm)
+            self._boardroom_llm = analyst_llm
         return self._boardroom
 
     @staticmethod
@@ -344,6 +366,68 @@ class LiveTradingEngine:
             return str(snap.data.index[-1])
         except Exception:                                      # noqa: BLE001
             return "unknown"
+
+    def _is_quiet_since_last_decision(self, price: float, verdict
+                                      ) -> tuple[bool, str]:
+        """Has anything material moved since the last model call?
+
+        Returns ``(quiet, reason)``. ``quiet`` means the market state is close
+        enough to the last decision that paying for a fresh one is waste.
+
+        Three ways to fail the check, any of which forces a real call:
+
+        * no prior decision to lean on;
+        * the price or the 38-indicator score moved past its threshold;
+        * the last decision is older than ``_max_decision_age_sec`` — a
+          staleness ceiling so a flat market can never leave the bot running
+          on an opinion from hours ago.
+        """
+        if not self._quiet_skip_enabled:
+            return False, ""
+
+        with self._lock:
+            ctx = self._last_ai_context
+            last = self._last_decision
+            max_age = self._max_decision_age_sec
+            price_tol = self._quiet_price_pct
+            score_tol = self._quiet_score_delta
+
+        if last is None or not ctx:
+            return False, ""
+
+        age = time.time() - float(ctx.get("ts", 0))
+        if age >= max_age:
+            return False, ""
+
+        prev_price = float(ctx.get("price") or 0)
+        if prev_price <= 0:
+            return False, ""
+        move_pct = abs(price / prev_price - 1.0) * 100.0
+        if move_pct >= price_tol:
+            return False, ""
+
+        # A committee swing is a regime change even at a flat price.
+        if verdict is not None and ctx.get("score") is not None:
+            if abs(float(verdict.score) - float(ctx["score"])) >= score_tol:
+                return False, ""
+            # An outright change of side always deserves a fresh look.
+            if ctx.get("committee_action") and \
+                    verdict.action != ctx["committee_action"]:
+                return False, ""
+
+        return True, (f"Quiet market — price {move_pct:+.3f}% since the last "
+                      f"call {age/60:.1f}m ago")
+
+    def _remember_ai_context(self, price: float, verdict) -> None:
+        """Record what the market looked like when a decision was paid for."""
+        with self._lock:
+            self._last_ai_context = {
+                "ts": time.time(),
+                "price": float(price),
+                "score": (float(verdict.score) if verdict is not None else None),
+                "committee_action": (verdict.action if verdict is not None
+                                     else None),
+            }
 
     def _shared_decision(self, cache_key: str, ttl: float, compute, *,
                          mode: str, ticker: str):
@@ -392,6 +476,7 @@ class LiveTradingEngine:
         take_profit_pct: Optional[float] = None,
         daily_loss_limit_pct: Optional[float] = None,
         daily_target_pct: Optional[float] = None,
+        quiet_skip: Optional[bool] = None,
     ) -> None:
         with self._lock:
             if ticker is not None and ticker.upper() != self._ticker:
@@ -438,6 +523,8 @@ class LiveTradingEngine:
                 self._daily_loss_limit_pct = float(daily_loss_limit_pct)
             if daily_target_pct is not None:
                 self._daily_target_pct = float(daily_target_pct)
+            if quiet_skip is not None:
+                self._quiet_skip_enabled = bool(quiet_skip)
 
     # ── Public read ─────────────────────────────────────────────────────────
 
@@ -471,6 +558,7 @@ class LiveTradingEngine:
                 "slippage_enabled": self._enable_slippage,
                 "api_cycles":      self._api_cycles,
                 "cached_cycles":   self._cached_cycles,
+                "quiet_skips":     self._quiet_skips,
                 "tenant":          self._tenant_snapshot(),
             }
 
@@ -1155,6 +1243,35 @@ class LiveTradingEngine:
                 with self._lock:
                     self._last_committee = verdict.summary_dict()
 
+        # ── Quiet-market gate ───────────────────────────────────────────────
+        # The shared cache already collapses repeat cycles *within* one bar.
+        # This covers the next case up: a new bar where nothing actually
+        # moved. Re-asking a nine-seat boardroom because the price ticked
+        # 0.02% is money for an answer that was never going to change.
+        #
+        # Crucially this SKIPS THE CYCLE rather than re-running the old
+        # verdict through execution: acting on a stale BUY every quiet cycle
+        # would pyramid into the position again and again. Stop-loss and
+        # take-profit already ran above and are unaffected — they are
+        # deterministic and never consult the model.
+        #
+        # COMMITTEE is exempt: it costs nothing, so there is nothing to save.
+        if strategy_mode != "COMMITTEE":
+            quiet, why = self._is_quiet_since_last_decision(price, verdict)
+            if quiet:
+                with self._lock:
+                    self._quiet_skips += 1
+                self._emit(PulseStage.AI,
+                           f"😴 {why} — holding the last {strategy_mode} "
+                           f"verdict, no API call this cycle", level="INFO")
+                t = self._tenant
+                if t is not None:
+                    try:
+                        t.record_saving(mode=strategy_mode, ticker=ticker)
+                    except Exception:                          # noqa: BLE001
+                        pass
+                return
+
         if strategy_mode == "COMMITTEE":
             decision = verdict.to_trading_decision(ticker)
 
@@ -1215,6 +1332,7 @@ class LiveTradingEngine:
             with self._lock:
                 self._last_decision = decision
                 self._last_boardroom = ruling.summary_dict()
+            self._remember_ai_context(price, verdict)
 
             t = ruling.tally()
             chair_tag = "⚠ majority fallback" if ruling.chair_is_fallback \
@@ -1277,6 +1395,7 @@ class LiveTradingEngine:
 
             with self._lock:
                 self._last_decision = decision
+            self._remember_ai_context(price, verdict)
 
             agree = "AGREE" if ai_dec.action == verdict.action else \
                     f"committee {verdict.action} / AI {ai_dec.action}"
@@ -1322,6 +1441,7 @@ class LiveTradingEngine:
 
             with self._lock:
                 self._last_decision = decision
+            self._remember_ai_context(price, verdict)
 
             tag = "⚠" if decision.is_fallback else "✓"
             self._emit(

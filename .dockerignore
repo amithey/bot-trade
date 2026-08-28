@@ -26,6 +26,14 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Streamlit secrets hold the OIDC client_secret and cookie_secret. Baking them
+# into the image would ship your OAuth credentials to anyone who can pull it.
+# Mount the file at runtime instead (compose: a volume or a secret).
+.streamlit/secrets.toml
+
+# Agent / editor tooling config — no reason to ship it.
+.claude/
+
 # VCS
 .git/
 .gitignore

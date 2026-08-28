@@ -295,11 +295,16 @@ def render_account_chip() -> None:
                 forget_identity()
                 st.logout()
         elif mode == "password":
-            from dashboard._auth import logout
+            from dashboard._auth import hash_is_legacy, logout
             st.caption(
                 "Shared password login — everyone who signs in shares one "
                 "account and one budget."
             )
+            if hash_is_legacy():
+                st.caption(
+                    ":orange[Legacy SHA-256 password hash — regenerate with "
+                    "`python -m dashboard._auth`.]"
+                )
             if st.button("Log out", use_container_width=True,
                          key="_bt_pw_logout"):
                 forget_identity()

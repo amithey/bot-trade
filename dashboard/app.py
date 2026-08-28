@@ -18,7 +18,6 @@ if str(_PROJECT_ROOT) not in _sys.path:
 # ────────────────────────────────────────────────────────────────────────────
 
 import html as _html
-import os
 from datetime import datetime
 
 import pandas as pd
@@ -69,21 +68,13 @@ ensure_portfolio_in_session()
 ensure_event_buffer()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# API key pre-flight — deliberately non-fatal
-#
-# A missing ANTHROPIC_API_KEY used to stop the app dead. It no longer does:
-# COMMITTEE mode (38 indicators voting on every bar) makes no API calls at
-# all, so a visitor with no key still gets a complete, working product. Only
-# the LLM modes are gated, and the entitlement layer does that per user
-# further down.
-# ─────────────────────────────────────────────────────────────────────────────
-_raw_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-#: True when this deployment has a shared key that can fund trial credit.
-_platform_key_ok = (_raw_key.startswith("sk-ant-")
-                    and "PASTE" not in _raw_key.upper())
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Engine + auto-refresh
+#
+# Note there is no API-key pre-flight here. A missing ANTHROPIC_API_KEY used
+# to stop the app dead; it no longer does. COMMITTEE mode (38 indicators
+# voting on every bar) makes no API calls at all, so a visitor with no key
+# still gets a complete, working product. Only the LLM modes are gated, and
+# the entitlement layer does that per user further down.
 # ─────────────────────────────────────────────────────────────────────────────
 engine = get_live_engine()
 if engine is None:

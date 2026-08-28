@@ -25,8 +25,6 @@ from portfolio.virtual_account import LivePortfolio
 #: settings are adopted once into that account's own file — see
 #: ``_load_profile_for``. Nothing writes here any more.
 LEGACY_PROFILE_PATH = ROOT / "data" / "user_profile.json"
-#: Back-compat alias for any page still importing the old name.
-PROFILE_PATH    = LEGACY_PROFILE_PATH
 DEFAULT_TICKERS = ["BTC-USD", "ETH-USD", "SOL-USD", "QQQ", "SPY",
                    "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META"]
 RISK_CHOICES    = ["Conservative", "Balanced", "Aggressive", "Micro-Scalp"]

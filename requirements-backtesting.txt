@@ -1,5 +1,16 @@
-# Optional: only needed to run backtesting/backtest_runner.py.
-# Not installed on the hosted dashboard — vectorbt 1.x needs numpy>=2.4.6
-# and pandas>=3.0.3, both well ahead of what the rest of this project
-# pins, and the dashboard never imports this module.
-vectorbt>=1.1.0
+# Optional extra: only needed to run backtesting/backtest_runner.py.
+#
+#   pip install -r requirements.txt -r requirements-backtesting.txt
+#
+# Kept out of requirements.txt because the hosted dashboard never imports it.
+# `import vectorbt` appears in exactly one place — backtest_runner.py, and even
+# there it is a lazy import inside a function. The Committee Lab page runs
+# through strategy/committee_backtest.py, which is pure pandas/numpy, so
+# backtesting in the UI works without this file.
+#
+# Version note: vectorbt 1.x requires numpy>=2.4.6 and pandas>=3.0.3, both far
+# ahead of what requirements.txt pins. 0.28.5 is the version this project is
+# tested against and the one that installs cleanly alongside numpy 1.26.4.
+# Moving to 1.x means upgrading numpy and pandas across the whole project —
+# a deliberate migration, not a dependency bump.
+vectorbt==0.28.5

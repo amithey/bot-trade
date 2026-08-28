@@ -1,0 +1,19 @@
+# =============================================================================
+# BotTrade — development and CI dependencies
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# Deliberately NOT in requirements.txt: the Dockerfile builds from that file,
+# and shipping linters and test tooling into a production image adds install
+# time and attack surface for no runtime benefit.
+# =============================================================================
+
+pytest==7.4.4
+
+# Linters and type checking are not pinned to an installed version because
+# they are not currently installed in this environment — these are the
+# versions the project targets. Install them before relying on `ruff`/`mypy`
+# output, and pin whatever you land on.
+ruff>=0.11
+black>=25.1
+mypy>=1.15

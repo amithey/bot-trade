@@ -13,6 +13,18 @@ hosts, password auth, and crash reporting. For local dev, the
   - **Docker 24+** with the Compose plugin (recommended)
   - Or Python 3.11+ on the target host
 
+Running from source rather than Docker:
+
+```bash
+python -m venv .venv && . .venv/bin/activate    # Windows: .venv\Scriptsctivate
+pip install -r requirements.txt                  # runtime
+pip install -r requirements-dev.txt              # tests + linters, optional
+```
+
+Use a virtualenv. `requirements.txt` pins exact versions of the stack the
+test suite runs on, and installing it into a shared global Python will fight
+with whatever else lives there.
+
 ---
 
 ## 2. Configure environment
@@ -36,18 +48,24 @@ from the internet:
 
 | Key                              | Purpose                          |
 | -------------------------------- | -------------------------------- |
-| `BOTTRADE_AUTH_PASSWORD_HASH`    | SHA-256 hash — gates the UI       |
-| `BOTTRADE_AUTH_HASH_SALT`        | Per-deploy salt (any random str) |
+| `BOTTRADE_AUTH_PASSWORD_HASH`    | PBKDF2 hash — gates the UI        |
+| `BOTTRADE_AUTH_HASH_SALT`        | Legacy hashes only (see below)   |
 
 Generate a password hash:
 
 ```bash
-python -c "import hashlib; print(hashlib.sha256(b'MYSALT' + b'mypassword').hexdigest())"
+python -m dashboard._auth
 ```
 
-Then put the digest into `BOTTRADE_AUTH_PASSWORD_HASH` and the same
-salt into `BOTTRADE_AUTH_HASH_SALT`. The dashboard now shows a login
-form before any page renders.
+It prompts for the password twice and prints the line to paste into `.env`.
+The hash is PBKDF2-HMAC-SHA256 with a random salt baked into it, so
+`BOTTRADE_AUTH_HASH_SALT` is not needed for new hashes. The dashboard then
+shows a login form before any page renders.
+
+> **Upgrading from the old hash?** Bare SHA-256 digests (64 hex characters,
+> with the optional `BOTTRADE_AUTH_HASH_SALT`) still verify, so nothing breaks
+> on deploy — but a single unsalted SHA-256 round is cheap to brute-force. The
+> login screen flags it; rerun the command above to rotate.
 
 > **Local dev** — leave both unset. Auth is automatically skipped.
 
@@ -99,6 +117,13 @@ to your real origin in production (`https://yourdomain/oauth2callback`).
 
 **4. Restart**
 
+Running under Docker? `.streamlit/secrets.toml` is excluded from the image on
+purpose, so mount it at runtime — uncomment the secrets volume in
+`docker-compose.yml`. Create the file *before* starting: Docker silently
+creates a directory at a missing bind-mount source, which then breaks
+Streamlit.
+
+
 The dashboard now opens on a sign-in screen. After sign-in, each person gets:
 
 | Per user | Stored at |
@@ -126,15 +151,31 @@ second one on the same portfolio. The portfolio is checkpointed to disk after
 every cycle and once more when the loop exits, so a restart resumes with
 positions, cash and trade history intact.
 
-`BOTTRADE_MAX_LIVE_ENGINES` (default 25) caps concurrent live bots. When full,
-a **new** bot is refused — an existing one is never evicted, because evicting
-means silently stopping someone's trading and leaving their stop-loss
+`BOTTRADE_MAX_LIVE_ENGINES` (default 100) caps concurrent live bots. When
+full, a **new** bot is refused — an existing one is never evicted, because
+evicting means silently stopping someone's trading and leaving their stop-loss
 unwatched. Users already holding an engine always reattach, however full the
 process is. Everything except the live loop (backtests, Committee Lab,
 analytics) keeps working at capacity.
 
-This is a single Python process, so a few dozen live bots is the realistic
-ceiling. Past that, the trading loops need to move to a separate worker.
+Measure before you change it:
+
+```bash
+python -m tools.loadtest_engines
+```
+
+It runs the CPU-bound half of a cycle (the 38-indicator vote plus portfolio
+bookkeeping) at several concurrency levels, using COMMITTEE mode so it costs
+nothing in API calls. On the development machine it sustained ~7 cycles per
+second regardless of bot count — the GIL, since the indicator maths is pure
+pandas/numpy — and 55 KB of memory per idle engine. At a 30-second interval
+that is ~210 bots before CPU saturates.
+
+So CPU and memory are *not* the first limits. What will bite first, and what
+the tool does not measure: Yahoo Finance rate-limiting a host fetching for a
+hundred symbols, Anthropic rate limits in the AI modes, and thread scheduling
+under real network load. Run the tool on the actual host, then set the cap
+below the level where p95 starts climbing.
 
 ---
 
@@ -262,7 +303,7 @@ Stop the container, edit `.env`, restart:
 
 ```bash
 docker compose stop
-# update BOTTRADE_AUTH_PASSWORD_HASH in .env
+# regenerate with: python -m dashboard._auth, then update .env
 docker compose up -d
 ```
 
@@ -298,6 +339,11 @@ Before pointing real eyeballs at the URL:
 - [ ] Backup covers `data/profiles/`, `data/portfolios/` and
       `data/usage.db` — these are your users' accounts and billing
 - [ ] `BOTTRADE_MAX_LIVE_ENGINES` matched to the host's capacity
+- [ ] `docker build` succeeded from a clean checkout — the image installs
+      exactly `requirements.txt`, so anything not pinned there is not
+      in production
+- [ ] Confirmed `.streamlit/secrets.toml` is NOT inside the built image
+      (`docker run --rm <image> ls -la /app/.streamlit`)
 - [ ] Tested *Panic Stop* on a fresh trade (it really closes positions)
 - [ ] Reviewed Conservative / Balanced / Aggressive risk envelopes —
       they cap position size + circuit breakers

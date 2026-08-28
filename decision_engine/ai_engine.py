@@ -353,6 +353,13 @@ class AITradingEngine:
         )
         #: Set by :func:`saas.tenant.engine_for_key`; ``None`` in single-user mode.
         self.usage_meter = None
+
+        # Remembered so sibling models (see :meth:`make_llm`) can be built on
+        # the same key and meter without re-reading the environment.
+        self._api_key_used = _raw_key
+        self._temperature = temperature
+        self._callbacks = list(callbacks) if callbacks else None
+        self._llm_siblings: dict[str, ChatAnthropic] = {}
         self.structured_llm = self.llm.with_structured_output(TradingDecision)
 
         # Shared news fetcher with 10-minute TTL cache so AUTO loops
@@ -370,6 +377,35 @@ class AITradingEngine:
         self._macro_news = NewsFeed(ttl_seconds=30 * 60)
 
         logger.debug(f"[AIEngine] ready — model={self._model}, temp={temperature}")
+
+    def make_llm(self, model: Optional[str] = None):
+        """A chat model on this engine's key and meter, but a different model.
+
+        Lets one caller mix models without a second engine — the boardroom
+        uses it to run eight analysts cheaply while the chairman, whose
+        ruling is the binding one, runs on something stronger. Costs are
+        still attributed to this engine's account because the same usage
+        meter is attached.
+
+        Returns ``self.llm`` when *model* is the engine's own model, so the
+        common single-model case allocates nothing.
+        """
+        target = (model or "").strip() or self._model
+        if target == self._model:
+            return self.llm
+        cached = self._llm_siblings.get(target)
+        if cached is None:
+            cached = ChatAnthropic(
+                model=target,
+                temperature=self._temperature,
+                api_key=self._api_key_used,
+                max_retries=0,
+                timeout=20.0,
+                callbacks=self._callbacks,
+            )
+            self._llm_siblings[target] = cached
+            logger.debug(f"[AIEngine] sibling model ready — {target}")
+        return cached
 
     # ------------------------------------------------------------------ #
     # Public API

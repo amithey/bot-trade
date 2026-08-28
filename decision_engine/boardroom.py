@@ -376,11 +376,21 @@ class AnalystBoardroom:
 
     Parameters
     ----------
-    llm:  A LangChain chat model (the AITradingEngine's ``.llm``).
+    llm:
+        Chat model for the eight analysts (the AITradingEngine's ``.llm``).
+    chair_llm:
+        Optional separate model for the chairman. The panel is ~9 calls per
+        cycle, so running every seat on one model means any upgrade costs
+        nine times as much. Each analyst returns a single structured vote
+        from a narrow packet and stays cheap; the chairman weighs the whole
+        transcript and casts the binding ruling, so that is the one seat
+        worth spending on. Defaults to *llm* — a single-model setup behaves
+        exactly as before.
     """
 
-    def __init__(self, llm) -> None:
+    def __init__(self, llm, chair_llm=None) -> None:
         self._llm = llm
+        self._chair_llm = chair_llm if chair_llm is not None else llm
         self._vote_llm = llm.with_structured_output(AnalystVote)
         from market_data.news import NewsFeed
         self._news = NewsFeed(ttl_seconds=15 * 60)
@@ -448,7 +458,7 @@ class AnalystBoardroom:
     def _ask_chairman(self, ticker: str, opinions: list[AnalystOpinion],
                       position_note: str, risk_profile: str):
         from decision_engine.ai_engine import TradingDecision
-        chair_llm = self._llm.with_structured_output(TradingDecision)
+        chair_llm = self._chair_llm.with_structured_output(TradingDecision)
         transcript = "\n\n".join(
             f"{o.emoji} {o.name} — {o.role}\n"
             f"Vote: {o.vote} (conviction {o.conviction:.0%})\n"
