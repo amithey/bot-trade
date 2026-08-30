@@ -446,16 +446,24 @@ class NewsFeed:
         crypto_providers: Optional[Iterable[NewsProvider]] = None,
         ttl_seconds: int = _DEFAULT_TTL_SECONDS,
     ) -> None:
-        self.ticker_providers = list(ticker_providers or [YahooFinanceRSS()])
-        self.macro_providers  = list(macro_providers  or [
-            ReutersTopNewsRSS(),
-            BloombergGNewsRSS(),
-            MarketWatchRSS(),
-            CNBCMarketsRSS(),
-            BBCBusinessRSS(),
-            GoogleMarketsNewsRSS(),
-        ])
-        self.crypto_providers = list(crypto_providers or [CoinDeskRSS()])
+        # `is None` on purpose, not truthiness: `x or default` treats an
+        # explicitly empty list the same as "not provided" and silently
+        # substitutes the real defaults - so passing providers=[] to turn a
+        # feed off (e.g. to cut a rate-limited or costly source) would
+        # silently reactivate every default provider instead.
+        self.ticker_providers = list(
+            [YahooFinanceRSS()] if ticker_providers is None else ticker_providers)
+        self.macro_providers = list(
+            [
+                ReutersTopNewsRSS(),
+                BloombergGNewsRSS(),
+                MarketWatchRSS(),
+                CNBCMarketsRSS(),
+                BBCBusinessRSS(),
+                GoogleMarketsNewsRSS(),
+            ] if macro_providers is None else macro_providers)
+        self.crypto_providers = list(
+            [CoinDeskRSS()] if crypto_providers is None else crypto_providers)
         self._ttl = ttl_seconds
         # key -> (fetched_ts, list[Headline])
         self._cache: dict[str, tuple[float, list[Headline]]] = {}
