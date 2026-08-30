@@ -155,8 +155,12 @@ class YouTubeScraper:
     ) -> None:
         self._persist_dir = Path(persist_dir or settings.chroma_persist_dir)
         self._collection_name = collection_name or settings.chroma_collection_name
-        self._chunk_size = chunk_size or settings.chunk_size
-        self._chunk_overlap = chunk_overlap or settings.chunk_overlap
+        # `is None` on purpose, not truthiness: `x or default` treats an
+        # explicitly-passed 0 (a legitimate "no overlap"/zero chunk size
+        # value) the same as "not provided" and silently substitutes the
+        # settings default instead of honouring the caller's 0.
+        self._chunk_size = chunk_size if chunk_size is not None else settings.chunk_size
+        self._chunk_overlap = chunk_overlap if chunk_overlap is not None else settings.chunk_overlap
         self._embedding_model = embedding_model or settings.embedding_model
         self._preferred_languages = preferred_languages or ["en", "en-US", "en-GB", "iw", "he"]
 
