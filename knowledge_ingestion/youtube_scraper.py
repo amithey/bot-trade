@@ -55,6 +55,7 @@ from youtube_transcript_api import (
 from youtube_transcript_api._errors import YouTubeRequestFailed
 
 from config.settings import settings
+from rag.ownership import normalise_owner as _normalise_owner
 from utils.hf_quiet import configure_quiet_hf, quiet_model_load
 from utils.logger import get_logger
 
@@ -152,6 +153,7 @@ class YouTubeScraper:
         chunk_overlap: Optional[int] = None,
         embedding_model: Optional[str] = None,
         preferred_languages: Optional[list[str]] = None,
+        owner: Optional[str] = None,
     ) -> None:
         self._persist_dir = Path(persist_dir or settings.chroma_persist_dir)
         self._collection_name = collection_name or settings.chroma_collection_name
@@ -163,6 +165,8 @@ class YouTubeScraper:
         self._chunk_overlap = chunk_overlap if chunk_overlap is not None else settings.chunk_overlap
         self._embedding_model = embedding_model or settings.embedding_model
         self._preferred_languages = preferred_languages or ["en", "en-US", "en-GB", "iw", "he"]
+        #: Account these chunks belong to; see rag.ownership.
+        self._owner = owner
 
         # Lazily initialised — avoids loading heavy models on import
         self._chroma_client: Optional[chromadb.PersistentClient] = None
@@ -610,6 +614,9 @@ class YouTubeScraper:
             metadatas.append(
                 {
                     "source": "youtube",
+                    # Attributes the chunk to the ingesting account so it stays
+                    # out of every other account's retrieval.
+                    "owner": _normalise_owner(self._owner),
                     "video_id": video_id,
                     "title": title,
                     "url": url,
@@ -668,6 +675,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Human-readable title to tag this video in the vector store.",
     )
     parser.add_argument(
+        "--owner",
+        default=None,
+        metavar="ACCOUNT",
+        help="Account id these chunks belong to. Omit for shared content.",
+    )
+    parser.add_argument(
         "--chunk-size",
         type=int,
         default=None,
@@ -692,6 +705,7 @@ def main() -> None:
     scraper = YouTubeScraper(
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
+        owner=args.owner,
     )
 
     result = scraper.ingest(url=args.url, title=args.title)

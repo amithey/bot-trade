@@ -215,7 +215,8 @@ class ArticleScraper:
     # -- public ----------------------------------------------------------
 
     def ingest(self, url: str,
-               title: Optional[str] = None) -> ArticleIngestionResult:
+               title: Optional[str] = None,
+               owner: Optional[str] = None) -> ArticleIngestionResult:
         """Fetch *url*, extract text, chunk, and upsert. Never raises —
         check ``result.success``."""
         t0 = time.time()
@@ -252,8 +253,12 @@ class ArticleScraper:
             return _fail("text splitter produced no chunks")
 
         ids = [self._chunk_id(url, i, c) for i, c in enumerate(chunks)]
+        from rag.ownership import normalise_owner
         metas = [{
             "source":       "web_article",
+            # Attributes the chunk to the account that ingested it, so another
+            # account's retrieval cannot surface a page this user chose.
+            "owner":        normalise_owner(owner),
             "source_id":    domain,
             "url":          url,
             "title":        final_title[:200],
@@ -301,13 +306,17 @@ def main() -> int:
                     help="Article URL (repeat --url to ingest several).")
     ap.add_argument("--title", default=None,
                     help="Optional title override (single-URL mode only).")
+    ap.add_argument("--owner", default=None,
+                    help="Account id these chunks belong to. Omit for shared "
+                         "operator-curated content.")
     args = ap.parse_args()
 
     scraper = ArticleScraper()
     failures = 0
     for url in args.url:
         res = scraper.ingest(
-            url, title=args.title if len(args.url) == 1 else None)
+            url, title=args.title if len(args.url) == 1 else None,
+            owner=args.owner)
         print(res)
         if not res.success:
             failures += 1

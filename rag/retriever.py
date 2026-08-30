@@ -208,11 +208,21 @@ class StrategyRetriever:
         collection_name: Optional[str] = None,
         embedding_model: Optional[str] = None,
         distance_threshold: float = _DEFAULT_DISTANCE_THRESHOLD,
+        owner: Optional[str] = None,
     ) -> None:
         self._persist_dir: str = persist_dir or str(settings.chroma_persist_dir)
         self._collection_name: str = collection_name or settings.chroma_collection_name
         self._embedding_model: str = embedding_model or settings.embedding_model
         self._distance_threshold: float = distance_threshold
+        #: Default account this retriever answers for.
+        #:
+        #: The dashboard caches ONE retriever for the whole process
+        #: (``st.cache_resource``), so in a multi-account deployment this
+        #: instance is shared and its default is not per-user. Ownership
+        #: therefore travels with the call — see the ``owner`` argument on
+        #: :meth:`get_relevant_strategies` and :meth:`add_lesson`, which wins
+        #: over this. Setting it here is for single-account and CLI callers.
+        self._owner: Optional[str] = owner
 
         # Lazily initialised
         self._client: Optional[chromadb.PersistentClient] = None
@@ -226,6 +236,7 @@ class StrategyRetriever:
         self,
         snapshot: MarketSnapshot,
         top_k: int = 3,
+        owner: Optional[str] = None,
     ) -> RetrievalResult:
         """
         Translate *snapshot* into a semantic query and retrieve the most
@@ -275,11 +286,18 @@ class StrategyRetriever:
         # Cap top_k to avoid ChromaDB raising when n_results > collection size
         effective_k = min(top_k, collection_size)
 
+        # Limit the search to what this account may see. Applied as a ChromaDB
+        # `where` clause rather than filtered after the fact, so another
+        # account's chunks never occupy one of the top_k slots.
+        from rag.ownership import owner_filter
+        where = owner_filter(owner if owner is not None else self._owner)
+
         try:
             raw = collection.query(
                 query_texts=[query],
                 n_results=effective_k,
                 include=["documents", "metadatas", "distances"],
+                **({"where": where} if where else {}),
             )
         except Exception as exc:
             logger.error(f"ChromaDB query failed: {exc}")
@@ -309,7 +327,8 @@ class StrategyRetriever:
             collection_size=collection_size,
         )
 
-    def add_lesson(self, text: str, metadata: Optional[dict[str, Any]] = None) -> str:
+    def add_lesson(self, text: str, metadata: Optional[dict[str, Any]] = None,
+                   owner: Optional[str] = None) -> str:
         """
         Persist a short post-trade lesson to the ChromaDB collection so that
         future ``get_relevant_strategies()`` queries can surface it alongside
@@ -333,9 +352,16 @@ class StrategyRetriever:
         import uuid
         from datetime import datetime as _dt
 
+        from rag.ownership import normalise_owner
+
         doc_id = f"lesson-{uuid.uuid4().hex[:12]}"
         meta = dict(metadata or {})
         meta.setdefault("type", "lesson")
+        meta.setdefault("source", "lesson")
+        # A lesson is drawn from one account's own trades, so it belongs to
+        # that account — sharing them would leak trading history between users
+        # through the retrieval path.
+        meta["owner"] = normalise_owner(owner if owner is not None else self._owner)
         meta["created_at"] = _dt.utcnow().isoformat(timespec="seconds")
         # ChromaDB rejects None-valued metadata — coerce
         meta = {k: ("" if v is None else v) for k, v in meta.items()}

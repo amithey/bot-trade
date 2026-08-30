@@ -207,8 +207,11 @@ class PlaylistIngestor:
         self,
         scraper: Optional[YouTubeScraper] = None,
         delay_between_videos: float = _DEFAULT_DELAY_SECONDS,
+        owner: Optional[str] = None,
     ) -> None:
-        self._scraper = scraper or YouTubeScraper()
+        # `owner` only applies to a scraper we build ourselves — an injected
+        # one already carries whatever attribution its caller chose.
+        self._scraper = scraper or YouTubeScraper(owner=owner)
         self._delay = max(0.0, delay_between_videos)
 
     # ------------------------------------------------------------------ #
@@ -692,6 +695,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seconds to sleep between consecutive transcript requests",
     )
     parser.add_argument(
+        "--owner",
+        default=None,
+        metavar="ACCOUNT",
+        help="Account id these chunks belong to. Omit for shared content.",
+    )
+    parser.add_argument(
         "--list-only",
         action="store_true",
         help="Print the playlist video list without ingesting anything",
@@ -740,7 +749,8 @@ def main() -> None:
         console.print(t)
         return
 
-    ingestor = PlaylistIngestor(delay_between_videos=args.delay)
+    ingestor = PlaylistIngestor(delay_between_videos=args.delay,
+                                owner=args.owner)
 
     try:
         summary = ingestor.ingest_playlist(

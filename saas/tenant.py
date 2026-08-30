@@ -113,9 +113,11 @@ class Tenant:
         allow_platform_key: bool = True,
         model: Optional[str] = None,
         ledger: Optional[UsageLedger] = None,
+        knowledge_owner: Optional[str] = None,
     ) -> None:
         self._ledger = ledger or get_ledger()
         self._anon_account_id = account_id or "local"
+        self._knowledge_owner = (knowledge_owner or "").strip() or None
         self._model = model
         self._allow_platform_key = allow_platform_key
         self._user_key = keyvault.normalise(user_api_key)
@@ -156,6 +158,21 @@ class Tenant:
         is the same identity `plan`/`set_plan` already read and write.
         """
         return self._anon_account_id
+
+    @property
+    def knowledge_owner(self) -> str:
+        """Which account's knowledge chunks this tenant may retrieve.
+
+        Follows the *person*, like `billing_account_id` and for the same
+        reason: rotating an Anthropic key must not make a user's own ingested
+        documents disappear from their retrieval.
+
+        The dashboard supplies the filesystem-safe slug it already uses for
+        per-account files, so this matches exactly what the Knowledge page
+        stamped onto the chunks at ingest time. Falling back to the raw
+        billing id keeps non-dashboard callers (CLI, tests) coherent.
+        """
+        return self._knowledge_owner or self.billing_account_id
 
     @property
     def has_own_key(self) -> bool:

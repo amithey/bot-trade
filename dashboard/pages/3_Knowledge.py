@@ -15,6 +15,7 @@ if str(_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ROOT))
 # ────────────────────────────────────────────────────────────────────────────
 
+from dashboard._identity import account_slug
 from dashboard._shared import ROOT, apply_theme, ensure_profile_in_session
 
 _ALLOWED_HOSTS = {
@@ -81,7 +82,10 @@ if go_btn and url.strip():
         is_playlist = "list=" in clean_url or "/playlist?" in clean_url
         module = "knowledge_ingestion.playlist_scraper" if is_playlist \
                  else "knowledge_ingestion.youtube_scraper"
-        args = [sys.executable, "-X", "utf8", "-m", module, "--url", clean_url]
+        # Attribute the chunks to whoever is ingesting them: the collection
+        # is shared, so untagged content would be retrievable by everyone.
+        args = [sys.executable, "-X", "utf8", "-m", module,
+                "--url", clean_url, "--owner", account_slug()]
         with st.status(f"Running {module} …", expanded=True) as s:
             try:
                 # Streamlit session dir may differ from ROOT on some installs;
@@ -131,7 +135,8 @@ if art_go and art_urls_raw.strip():
         st.error(f"Not valid http(s) URLs: {', '.join(bad[:3])}")
     else:
         args = [sys.executable, "-X", "utf8", "-m",
-                "knowledge_ingestion.article_scraper"]
+                "knowledge_ingestion.article_scraper",
+                "--owner", account_slug()]
         for u in art_urls:
             args += ["--url", u]
         with st.status(f"Ingesting {len(art_urls)} article(s)…",

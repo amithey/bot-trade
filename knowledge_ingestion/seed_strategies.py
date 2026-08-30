@@ -30,6 +30,7 @@ from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunct
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config.settings import settings
+from rag.ownership import SHARED_OWNER
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -825,6 +826,8 @@ def ingest_all() -> None:
         metadatas  = [
             {
                 "source":       "seed",
+                # Operator-curated: every account may retrieve it.
+                "owner":        SHARED_OWNER,
                 "source_id":    source_id,
                 "title":        title,
                 "chunk_index":  i,

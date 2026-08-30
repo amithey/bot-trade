@@ -8,6 +8,7 @@ Usage:
     python seed_knowledge.py
 """
 
+from rag.ownership import SHARED_OWNER
 from utils.hf_quiet import configure_quiet_hf, quiet_model_load
 
 configure_quiet_hf()
@@ -170,6 +171,8 @@ def seed():
         metadatas = [
             {
                 "source": "seed_script",
+                # Operator-curated: every account may retrieve it.
+                "owner": SHARED_OWNER,
                 "title": strategy["title"],
                 "strategy_id": strategy["id"],
                 "chunk_index": i

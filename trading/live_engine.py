@@ -300,6 +300,23 @@ class LiveTradingEngine:
             from saas.plans import resolve as _resolve
             return _resolve("FREE", has_own_key=False, platform_spent_usd=1e9)
 
+    def _knowledge_owner(self):
+        """Which account's knowledge this engine may read and write.
+
+        ``None`` in single-user mode, which `rag.ownership` reads as "do not
+        filter" — there is nobody to isolate from, and filtering would hide
+        the operator's own legacy chunks.
+        """
+        t = self._tenant
+        if t is None:
+            return None
+        try:
+            return t.knowledge_owner
+        except Exception:                                      # noqa: BLE001
+            # Never let an attribution lookup break a trading cycle; the
+            # unfiltered read is the pre-existing behaviour.
+            return None
+
     def _coerce_mode(self, mode: str) -> tuple[str, str]:
         ent = self._entitlement()
         if ent is None:
@@ -686,6 +703,7 @@ class LiveTradingEngine:
             try:
                 self._retriever.add_lesson(
                     lesson,
+                    owner=self._knowledge_owner(),
                     metadata={
                         "ticker": ticker,
                         "action": "round_trip",
@@ -813,6 +831,7 @@ class LiveTradingEngine:
             try:
                 self._retriever.add_lesson(
                     meta_text,
+                    owner=self._knowledge_owner(),
                     metadata={
                         "type": "meta_lesson",
                         "batch_size": len(batch),
@@ -1352,7 +1371,8 @@ class LiveTradingEngine:
             self._emit(PulseStage.RAG, "Searching strategy knowledge base…",
                        level="INFO")
             try:
-                retrieval = self._retriever.get_relevant_strategies(snap)
+                retrieval = self._retriever.get_relevant_strategies(
+                    snap, owner=self._knowledge_owner())
             except Exception as exc:
                 self._emit(PulseStage.ERROR, f"RAG failed: {exc}", level="ERROR")
                 return
@@ -1415,7 +1435,8 @@ class LiveTradingEngine:
             self._emit(PulseStage.RAG, "Searching strategy knowledge base…",
                        level="INFO")
             try:
-                retrieval = self._retriever.get_relevant_strategies(snap)
+                retrieval = self._retriever.get_relevant_strategies(
+                    snap, owner=self._knowledge_owner())
             except Exception as exc:
                 self._emit(PulseStage.ERROR, f"RAG failed: {exc}", level="ERROR")
                 return

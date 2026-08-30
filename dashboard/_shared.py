@@ -755,10 +755,14 @@ def get_tenant():
     behind it are process-wide singletons.
     """
     from saas.tenant import Tenant
+    from dashboard._identity import account_slug
     return Tenant(
         account_id=account_id(),
         user_api_key=get_user_api_key(),
         model=None,
+        # Same slug the Knowledge page stamps onto ingested chunks, so
+        # retrieval matches what this account actually ingested.
+        knowledge_owner=account_slug(),
     )
 
 
