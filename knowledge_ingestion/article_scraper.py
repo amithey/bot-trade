@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -52,6 +52,7 @@ logger = get_logger(__name__)
 
 _MIN_ARTICLE_CHARS = 400          # refuse pages with less readable text
 _FETCH_TIMEOUT_SEC = 20
+_MAX_REDIRECTS = 5
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
@@ -192,14 +193,31 @@ class ArticleScraper:
 
     @staticmethod
     def _fetch(url: str) -> str:
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError(f"Not a valid http(s) URL: {url!r}")
-        resp = requests.get(
-            url, timeout=_FETCH_TIMEOUT_SEC,
-            headers={"User-Agent": _UA,
-                     "Accept-Language": "en-US,en;q=0.9,he;q=0.8"},
-        )
+        # Validate before every request, then follow redirects by hand.
+        # `requests` follows them automatically, so a permitted public URL that
+        # 302s to 169.254.169.254 would otherwise sail straight past a
+        # check done only on the URL the user typed.
+        from knowledge_ingestion.url_guard import check_url
+
+        current = check_url(url)
+        resp = None
+        for _ in range(_MAX_REDIRECTS):
+            resp = requests.get(
+                current, timeout=_FETCH_TIMEOUT_SEC,
+                allow_redirects=False,
+                headers={"User-Agent": _UA,
+                         "Accept-Language": "en-US,en;q=0.9,he;q=0.8"},
+            )
+            if resp.is_redirect or resp.is_permanent_redirect:
+                location = resp.headers.get("Location")
+                if not location:
+                    break
+                current = check_url(urljoin(current, location))
+                continue
+            break
+        else:
+            raise ValueError(f"Too many redirects (>{_MAX_REDIRECTS}) from {url!r}")
+
         resp.raise_for_status()
         ctype = resp.headers.get("Content-Type", "")
         if "html" not in ctype and "<html" not in resp.text[:2000].lower():

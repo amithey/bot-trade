@@ -129,10 +129,18 @@ art_go = art_btn_col.button("Ingest Articles", use_container_width=True)
 
 if art_go and art_urls_raw.strip():
     art_urls = [u.strip() for u in art_urls_raw.splitlines() if u.strip()]
-    bad = [u for u in art_urls
-           if urlparse(u).scheme not in ("http", "https")]
+    # The scraper enforces this too — it is the boundary that matters, since
+    # it also re-checks every redirect hop. Checking here as well just turns a
+    # subprocess failure into a readable message.
+    from knowledge_ingestion.url_guard import is_allowed
+    bad = []
+    for u in art_urls:
+        ok, reason = is_allowed(u)
+        if not ok:
+            bad.append(f"{u} — {reason}")
     if bad:
-        st.error(f"Not valid http(s) URLs: {', '.join(bad[:3])}")
+        st.error("These URLs can't be ingested:\n\n" +
+                 "\n\n".join(f"- {b}" for b in bad[:3]))
     else:
         args = [sys.executable, "-X", "utf8", "-m",
                 "knowledge_ingestion.article_scraper",

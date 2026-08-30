@@ -76,9 +76,28 @@ class FakeResponse:
         self.status_code = status
         self.headers = {"Content-Type": content_type}
 
+    # _fetch follows redirects by hand so it can re-validate each hop, so a
+    # response double has to answer these.
+    @property
+    def is_redirect(self):
+        return self.status_code in (301, 302, 303, 307, 308)
+
+    is_permanent_redirect = is_redirect
+
     def raise_for_status(self):
         if self.status_code >= 400:
             raise Exception(f"HTTP {self.status_code}")
+
+
+@pytest.fixture
+def public_dns(monkeypatch):
+    """Resolve every host to a public address so the SSRF guard permits it.
+
+    Without this the guard does real DNS — these tests are about fetching and
+    parsing, not about the address rules, which tests/test_url_guard.py covers.
+    """
+    monkeypatch.setattr("knowledge_ingestion.url_guard._resolve",
+                        lambda host: ["93.184.216.34"])
 
 
 ARTICLE_HTML = """
@@ -137,11 +156,11 @@ def test_extract_readable_text_never_raises_on_malformed_html():
 # article_scraper: ArticleScraper._fetch
 # --------------------------------------------------------------------------- #
 def test_fetch_rejects_non_http_urls():
-    with pytest.raises(ValueError, match="Not a valid http"):
+    with pytest.raises(ValueError, match="only http"):
         ArticleScraper._fetch("ftp://example.com/x")
 
 
-def test_fetch_rejects_non_html_content_type(monkeypatch):
+def test_fetch_rejects_non_html_content_type(monkeypatch, public_dns):
     monkeypatch.setattr(
         article_mod.requests, "get",
         lambda *a, **kw: FakeResponse("{}", content_type="application/json"),
@@ -150,7 +169,7 @@ def test_fetch_rejects_non_html_content_type(monkeypatch):
         ArticleScraper._fetch("https://example.com/data.json")
 
 
-def test_fetch_returns_text_on_success(monkeypatch):
+def test_fetch_returns_text_on_success(monkeypatch, public_dns):
     monkeypatch.setattr(
         article_mod.requests, "get",
         lambda *a, **kw: FakeResponse("<html>hi</html>"),
