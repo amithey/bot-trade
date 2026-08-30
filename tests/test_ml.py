@@ -64,9 +64,21 @@ def make_enriched_df(n: int = 300, seed: int = 7, drift: float = 0.0003,
 
 @pytest.fixture(autouse=True)
 def _isolate_model_store(tmp_path, monkeypatch):
-    """Redirect ml.model_store's persistence directory to a tmp dir so
-    tests never touch (or depend on) the real data/ml_models/ folder."""
-    monkeypatch.setattr(model_store, "_STORE_DIR", tmp_path / "ml_models")
+    """Redirect every on-disk path the ML models write to into a tmp dir so
+    tests never touch (or depend on) the real data/ml_models/ folder.
+
+    Two separate paths need redirecting, not one: model_store._STORE_DIR
+    covers the .joblib blobs, but TradeJournalML.save() *also* writes a
+    sidecar JSON at its own module-level _METADATA_PATH constant. Patching
+    only the first still let the journal tests write into the real data
+    directory — which is exactly what happened before this was fixed.
+    """
+    store_dir = tmp_path / "ml_models"
+    monkeypatch.setattr(model_store, "_STORE_DIR", store_dir)
+
+    from ml import trade_journal_ml as _journal_mod
+    monkeypatch.setattr(_journal_mod, "_METADATA_PATH",
+                        store_dir / "journal_ml_meta.json")
 
 
 # --------------------------------------------------------------------------- #

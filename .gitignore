@@ -46,6 +46,9 @@ data/user_profile.json
 data/user_profile.json.migrated
 data/yfinance_cache/
 data/ml_models/*.joblib
+# Sidecar written by TradeJournalML.save() alongside the .joblib blob —
+# personal training stats (n_train / last_fit), regenerated on every fit.
+data/ml_models/journal_ml_meta.json
 
 # Per-account API usage ledger (saas.ledger) — user billing data,
 # regenerated on demand. Never commit.
