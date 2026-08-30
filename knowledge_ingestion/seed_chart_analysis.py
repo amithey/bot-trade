@@ -1279,8 +1279,9 @@ def ingest_all() -> None:
 
     with quiet_model_load():
         embed_fn = SentenceTransformerEmbeddingFunction(
+            # No trust_remote_code — see rag/retriever.py, which loads the
+            # same model without granting a repo arbitrary code execution.
             model_name=settings.embedding_model,
-            trust_remote_code=True,
         )
 
     client = chromadb.PersistentClient(path=str(settings.chroma_persist_dir))

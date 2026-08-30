@@ -49,7 +49,8 @@ def _open_collection():
 
     with quiet_model_load():
         embed_fn = SentenceTransformerEmbeddingFunction(
-            model_name=settings.embedding_model, trust_remote_code=True,
+            # No trust_remote_code — the flag lets a model repo run code.
+            model_name=settings.embedding_model,
         )
     client = chromadb.PersistentClient(path=str(settings.chroma_persist_dir))
     return client.get_or_create_collection(

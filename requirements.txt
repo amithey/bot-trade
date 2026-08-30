@@ -15,9 +15,9 @@
 # The `langchain` meta-package, langchain-community, langchain-chroma and
 # langchain-huggingface were pinned here for a long time but are never
 # imported — Chroma and the embedding function are used directly (see below).
-langchain-core==1.2.29
+langchain-core==1.3.3
 langchain-anthropic==1.4.0
-langchain-text-splitters==1.1.1
+langchain-text-splitters==1.1.2
 
 # --- LLM: Anthropic / Claude --------------------------------------------------
 anthropic==0.95.0
@@ -45,18 +45,18 @@ numpy==1.26.4
 # Article scraping uses the stdlib HTMLParser — no extra dependency.
 # There is no PDF ingestion module, so PyPDF2/pdfplumber are not required.
 youtube-transcript-api==1.2.4
-yt-dlp==2026.3.17
+yt-dlp==2026.7.4
 
 # --- Configuration & environment ----------------------------------------------
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 pydantic==2.13.3
-pydantic-settings==2.14.0
+pydantic-settings==2.14.2
 
 # --- Utilities ----------------------------------------------------------------
 tenacity==9.1.4                # retry logic for API calls
 rich==13.9.4                   # terminal output / logging
 tqdm==4.67.3                   # progress bars
-requests==2.31.0
+requests==2.33.0
 
 # --- Billing --------------------------------------------------------------
 # Required only when STRIPE_SECRET_KEY is configured; without it billing is

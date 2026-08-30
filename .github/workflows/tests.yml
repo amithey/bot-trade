@@ -9,6 +9,10 @@ on:
   push:
     branches: ["main"]
   pull_request:
+  # A pin that was clean when it merged does not stay clean — advisories
+  # are published against versions that never change.
+  schedule:
+    - cron: "0 6 * * 1"
 
 # A newer push on the same branch/PR cancels the run still in progress —
 # no reason to finish testing a commit that is already superseded.
@@ -41,3 +45,54 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+  audit:
+    # Separate job, not a step: a dependency advisory published overnight
+    # should not turn a green test suite red, and the two answer different
+    # questions. Runs on a schedule as well as on push, because a pin that
+    # was clean when merged does not stay clean.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      # Audits the pinned set without installing it — resolving torch and
+      # friends here would cost several minutes for no extra signal.
+      - name: Audit pinned dependencies
+        run: |
+          pip-audit -r requirements.txt --progress-spinner=off             --ignore-vuln PYSEC-2026-311             --ignore-vuln CVE-2026-45830             --ignore-vuln CVE-2026-45833             --ignore-vuln CVE-2026-45831             --ignore-vuln PYSEC-2026-2556             --ignore-vuln PYSEC-2025-194 \n            --ignore-vuln PYSEC-2026-3447
+
+# Known-and-accepted, re-check when a fix ships:
+#
+#   chromadb PYSEC-2026-311 / CVE-2026-45830 / -45831 / -45833
+#     No fixed version exists at time of writing. All four describe the
+#     ChromaDB *server*: its HTTP API (/api/v2/tenants/...), its RBAC
+#     provider, and trust_remote_code on a server-side embedding endpoint.
+#     BotTrade embeds ChromaDB via PersistentClient — no server, no HTTP
+#     surface, no auth provider — so none of the four are reachable here.
+#     Ignored explicitly rather than left to fail every run, which would
+#     have trained everyone to ignore the whole job.
+#
+#   langchain-anthropic PYSEC-2026-2556 (fixed in 1.4.6)
+#     Path traversal in file-search agent middleware, which this project
+#     does not use. Taking 1.4.6 forces anthropic 0.95 -> >=0.96, and the
+#     newest release inside its range is 0.125 — a thirty-version jump of
+#     the SDK the decision engine depends on, to patch a component we
+#     never load. Revisit when anthropic is being upgraded anyway.
+#
+#   torch PYSEC-2025-194 (fixed in 2.13.0)
+#     Memory corruption in torch.jit.script, reachable only by calling it.
+#     torch is here transitively via sentence-transformers; nothing in
+#     this codebase calls torch.jit.
+#
+#   setuptools PYSEC-2026-3447 (fixed in 83.0.0)
+#     Coupled to the line above, which is why it is listed here rather
+#     than pinned: torch 2.11 caps setuptools below 83, so the floor pin
+#     that would have fixed this makes the dependency set unresolvable.
+#     It lifts when torch does.

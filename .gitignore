@@ -20,6 +20,8 @@ env/
 
 # Data — ChromaDB persisted state and raw ingested files
 data/chroma_db/
+# Timestamped snapshots taken before a migration (tools/backfill_*).
+data/chroma_db.bak-*/
 data/raw/
 data/pdfs/
 

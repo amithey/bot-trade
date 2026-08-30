@@ -17,3 +17,7 @@ pytest==7.4.4
 ruff>=0.11
 black>=25.1
 mypy>=1.15
+
+# Dependency vulnerability scanning — see the `audit` job in
+# .github/workflows/tests.yml for the accepted-risk list.
+pip-audit

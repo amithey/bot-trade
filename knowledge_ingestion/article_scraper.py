@@ -179,8 +179,11 @@ class ArticleScraper:
         )
         with quiet_model_load():
             embed_fn = SentenceTransformerEmbeddingFunction(
+                # No trust_remote_code: all-MiniLM-L6-v2 ships no custom
+                # code, and the flag lets a model repo execute arbitrary
+                # code at load. rag/retriever.py has always loaded the
+                # same model without it.
                 model_name=settings.embedding_model,
-                trust_remote_code=True,
             )
         client = chromadb.PersistentClient(
             path=str(settings.chroma_persist_dir))
