@@ -118,6 +118,44 @@ class Settings(BaseSettings):
         description="Streamlit server port (matches docker-compose mapping).",
     )
 
+    # ------------------------------------------------------------------ #
+    # Billing (Stripe) — see saas/billing.py
+    # ------------------------------------------------------------------ #
+    # Unset by default: billing is disabled and every account stays on the
+    # Free plan until this is configured. Never logged, never displayed.
+    stripe_secret_key: Optional[str] = Field(
+        default=None,
+        description="Stripe secret key (sk_test_... or sk_live_...). "
+                    "Unset disables billing entirely.",
+    )
+    stripe_price_id_pro: Optional[str] = Field(
+        default=None,
+        description="Stripe recurring Price ID for the Pro plan ($29/mo).",
+    )
+    stripe_price_id_desk: Optional[str] = Field(
+        default=None,
+        description="Stripe recurring Price ID for the Desk plan ($99/mo).",
+    )
+    stripe_webhook_secret: Optional[str] = Field(
+        default=None,
+        description="Signing secret for a Stripe webhook endpoint, if one is "
+                    "set up. Not required — v1 reconciles subscription state "
+                    "by polling on a TTL instead of receiving webhooks; see "
+                    "saas/billing.py.",
+    )
+    bottrade_base_url: str = Field(
+        default="http://localhost:8501",
+        description="Public URL this dashboard is reachable at. Used to build "
+                    "the Checkout success/cancel redirect URLs — must be the "
+                    "real deployed origin in production, not localhost.",
+    )
+
+    @property
+    def billing_configured(self) -> bool:
+        """True once there's enough to create at least one paid Checkout."""
+        return bool(self.stripe_secret_key and
+                    (self.stripe_price_id_pro or self.stripe_price_id_desk))
+
     @property
     def is_production(self) -> bool:
         return self.bottrade_env.lower() == "production"

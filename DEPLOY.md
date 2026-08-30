@@ -179,6 +179,76 @@ below the level where p95 starts climbing.
 
 ---
 
+## 2c. Billing (Stripe)
+
+Without this, every account stays on the Free plan forever — nothing is
+broken, there's just no way to actually get paid. `saas/billing.py` is the
+integration; this section is what to do in the Stripe Dashboard to make it
+work.
+
+**1. Account setup.** During onboarding, Stripe asks who should handle
+global sales tax/fraud/support. Choose **"Pick what you need"**, not
+"Let us handle it" — the latter adds a 3.5% surcharge on every transaction
+on top of Stripe's normal fee, aimed at businesses with real international
+tax complexity. For a new subscription product, check **Collect tax**
+(Stripe Tax — calculates tax by customer location; you register and remit
+only once you cross a threshold in a given jurisdiction) and skip **Send
+invoices** (that's for one-off manual invoices to a specific customer, not
+the self-serve subscription flow here).
+
+Stripe's onboarding also asks for a business website. If you don't have one,
+a plain static page describing the product satisfies it — see `landing/` in
+this repo, a zero-cost landing page deployable to a free Vercel subdomain.
+BotTrade itself can't be that page: it's a Streamlit app with a persistent
+background thread and a websocket connection, which serverless hosts like
+Vercel don't support.
+
+**2. Create two recurring Prices** in the Stripe Dashboard (Product catalog
+→ Add product) — one for Pro ($29/mo), one for Desk ($99/mo). The Free plan
+needs no Stripe price; it's the default for every new account. Copy each
+Price ID (`price_...`, not the Product ID).
+
+**3. Set the environment variables** (see `.env.example`):
+
+```bash
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_PRICE_ID_PRO=price_...
+STRIPE_PRICE_ID_DESK=price_...
+BOTTRADE_BASE_URL=https://yourdomain.example   # or http://localhost:8501 for local testing
+```
+
+**Test in test mode first.** Use the `sk_test_...` key and test-mode Price
+IDs, and pay with Stripe's test card `4242 4242 4242 4242` (any future
+expiry, any CVC). Confirm the whole loop — Settings → Upgrade → Stripe
+Checkout → redirected back with the new plan active — before switching to
+`sk_live_...` and live Price IDs.
+
+**How it works once configured:**
+
+* **Checkout** — clicking "Upgrade" in Settings creates a Stripe Checkout
+  Session and sends the user to Stripe's own hosted payment page. BotTrade
+  never sees a card number.
+* **Confirmation** — Stripe redirects back to `/Settings?session_id=...`;
+  the page verifies the session with Stripe directly (a session ID in a URL
+  is not proof of payment on its own) before applying the plan.
+* **Cancellation / payment method / invoices** — a "Manage subscription"
+  button opens Stripe's hosted Billing Portal. No custom UI to maintain.
+* **No webhook receiver.** The textbook way to learn about a cancellation
+  the instant it happens is a webhook, but Streamlit has no clean way to
+  expose an HTTP route for one, and standing up a second service just for
+  this is a bigger lift than a subscription business needs at this stage.
+  Instead, `sync_subscription_status` re-checks Stripe on a 5-minute TTL
+  whenever Settings loads. **Known limitation:** a cancellation made
+  directly in Stripe (not through the app) can take up to 5 minutes, or
+  until the user next opens Settings, to downgrade their access here.
+
+**4. Production checklist addition:** confirm `BOTTRADE_BASE_URL` is the
+real HTTPS origin before going live — Stripe's redirect back to a wrong or
+unreachable URL leaves a paying customer stranded on Stripe's own success
+page having no idea whether it worked.
+
+---
+
 ## 3. Docker (recommended)
 
 ### Build & run
@@ -339,6 +409,11 @@ Before pointing real eyeballs at the URL:
 - [ ] Backup covers `data/profiles/`, `data/portfolios/` and
       `data/usage.db` — these are your users' accounts and billing
 - [ ] `BOTTRADE_MAX_LIVE_ENGINES` matched to the host's capacity
+- [ ] If accepting payments: `STRIPE_SECRET_KEY` and price IDs are the
+      **live** (`sk_live_...`) ones, not test mode — verified with a real
+      card, not `4242 4242 4242 4242`
+- [ ] `BOTTRADE_BASE_URL` is the real HTTPS origin — a wrong redirect
+      stranded a paying customer on Stripe's success page
 - [ ] `docker build` succeeded from a clean checkout — the image installs
       exactly `requirements.txt`, so anything not pinned there is not
       in production

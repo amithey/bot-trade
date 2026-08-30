@@ -120,7 +120,25 @@ class UsageLedger:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
+            self._migrate_locked()
             self._conn.commit()
+
+    def _migrate_locked(self) -> None:
+        """Add columns introduced after the original schema.
+
+        `CREATE TABLE IF NOT EXISTS` in `_SCHEMA` only helps a brand-new
+        database — an existing `data/usage.db` from before Stripe billing
+        was added has an `accounts` table with no Stripe columns at all, and
+        SQLite has no `ADD COLUMN IF NOT EXISTS`. Caller must hold `_lock`.
+        """
+        cols = {row["name"] for row in
+               self._conn.execute("PRAGMA table_info(accounts)").fetchall()}
+        if "stripe_customer_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE accounts ADD COLUMN stripe_customer_id TEXT")
+        if "stripe_subscription_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE accounts ADD COLUMN stripe_subscription_id TEXT")
 
     # -- accounts ----------------------------------------------------------
     def ensure_account(self, account_id: str, plan_id: str = "FREE") -> str:
@@ -143,9 +161,55 @@ class UsageLedger:
             ).fetchone()
         return row["plan_id"] if row else "FREE"
 
-    def set_plan_id(self, account_id: str, plan_id: str) -> None:
+    def get_stripe_customer_id(self, account_id: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT stripe_customer_id FROM accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+        return row["stripe_customer_id"] if row else None
+
+    def set_stripe_customer_id(self, account_id: str, customer_id: str) -> None:
+        self.ensure_account(account_id)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE accounts SET stripe_customer_id = ?, updated_at = ? "
+                "WHERE account_id = ?",
+                (customer_id, _now().isoformat(), account_id),
+            )
+            self._conn.commit()
+
+    def get_stripe_subscription_id(self, account_id: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT stripe_subscription_id FROM accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+        return row["stripe_subscription_id"] if row else None
+
+    def account_id_for_stripe_customer(self, customer_id: str) -> Optional[str]:
+        """Reverse lookup — the account a given Stripe customer belongs to."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT account_id FROM accounts WHERE stripe_customer_id = ?",
+                (customer_id,),
+            ).fetchone()
+        return row["account_id"] if row else None
+
+    def set_plan_id(self, account_id: str, plan_id: str,
+                    stripe_subscription_id: Optional[str] = None) -> None:
         self.ensure_account(account_id, plan_id)
         with self._lock:
+            if stripe_subscription_id is not None:
+                self._conn.execute(
+                    "UPDATE accounts SET plan_id = ?, "
+                    "stripe_subscription_id = ?, updated_at = ? "
+                    "WHERE account_id = ?",
+                    (plan_id, stripe_subscription_id, _now().isoformat(),
+                     account_id),
+                )
+                self._conn.commit()
+                return
             self._conn.execute(
                 "UPDATE accounts SET plan_id = ?, updated_at = ? "
                 "WHERE account_id = ?",

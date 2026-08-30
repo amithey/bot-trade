@@ -19,9 +19,11 @@ from dashboard._shared import (
     get_user_api_key,
     save_profile, set_user_api_key, validate_ticker_symbol,
 )
-from saas import keyvault
+from saas import billing, keyvault
+from saas.ledger import get_ledger
 from saas.plans import PLANS, Funding
 from saas.pricing import format_usd
+from config.settings import settings as _settings
 
 st.set_page_config(page_title="BotTrade - Settings", page_icon=":material/settings:", layout="wide",
                    initial_sidebar_state="expanded")
@@ -33,6 +35,28 @@ st.markdown('<div class="page-sub">Plan, API key, trading profile, and watchlist
 
 # ── Plan + API key ──────────────────────────────────────────────────────────
 tenant = get_tenant()
+_ledger = get_ledger()
+_billing_account = tenant.billing_account_id
+
+# Returning from Stripe Checkout: the URL carries ?session_id=cs_...
+# Verify the payment with Stripe itself before granting anything — a
+# session_id in a query string is not proof of payment on its own.
+_returning_session = st.query_params.get("session_id")
+if _returning_session:
+    _confirmed_plan = billing.confirm_checkout_session(_ledger, _returning_session)
+    st.query_params.clear()
+    if _confirmed_plan:
+        st.success(f"Payment confirmed — you're now on the {_confirmed_plan.title()} plan.")
+    else:
+        st.warning("We couldn't confirm that checkout yet. If you completed "
+                   "payment, this updates within a few minutes — or contact "
+                   "support if it doesn't.")
+else:
+    # Cheap on every load: sync_subscription_status only re-checks Stripe
+    # once per BOTTRADE_SYNC_TTL; this is what notices a cancellation or a
+    # failed renewal that happened entirely on Stripe's side.
+    billing.sync_subscription_status(_ledger, _billing_account)
+
 ent = tenant.entitlement
 
 st.markdown("##### Your Plan & API Key")
@@ -110,7 +134,7 @@ if current:
         f'<span class="badge badge-green">Key active — {keyvault.mask(current)}'
         f'</span>', unsafe_allow_html=True)
 
-with st.expander("Compare plans"):
+with st.expander("Compare plans", expanded=not billing.billing_enabled()):
     for plan in PLANS.values():
         price = "Free" if plan.price_usd_month == 0 else \
                 f"${plan.price_usd_month:.0f}/mo"
@@ -119,6 +143,60 @@ with st.expander("Compare plans"):
         for line in plan.highlights:
             st.markdown(f"- {line}")
         st.markdown("")
+
+    if not billing.billing_enabled():
+        st.caption(
+            "Billing isn't configured on this deployment yet, so plans can't "
+            "be purchased here — see DEPLOY.md."
+        )
+
+# ── Upgrade / manage subscription ────────────────────────────────────────────
+if billing.billing_enabled():
+    st.markdown("##### Upgrade or manage your subscription")
+
+    _base = _settings.bottrade_base_url.rstrip("/")
+    _success_url = f"{_base}/Settings?session_id={{CHECKOUT_SESSION_ID}}"
+    _cancel_url = f"{_base}/Settings"
+
+    _purchasable = [p for p in billing.purchasable_plans() if p != ent.plan.id]
+    _has_customer = bool(_ledger.get_stripe_customer_id(_billing_account))
+    _slots = len(_purchasable) + (1 if _has_customer else 0)
+
+    if _slots:
+        cols = st.columns(_slots)
+
+        for col, plan_id in zip(cols, _purchasable):
+            plan = PLANS[plan_id]
+            with col:
+                st.markdown(f"**{plan.name}** — ${plan.price_usd_month:.0f}/mo")
+                st.caption(plan.tagline)
+                # Created on every render rather than cached: Checkout
+                # Sessions are meant to be short-lived and single-use, and
+                # this is a low-traffic settings page — simplicity here
+                # beats saving a Stripe API call that costs nothing.
+                checkout_url = billing.create_checkout_session(
+                    _ledger, _billing_account, plan_id,
+                    success_url=_success_url, cancel_url=_cancel_url,
+                )
+                if checkout_url:
+                    st.link_button(f"Upgrade to {plan.name}", checkout_url,
+                                   use_container_width=True, type="primary")
+                else:
+                    st.button(f"Upgrade to {plan.name}", disabled=True,
+                             use_container_width=True,
+                             help="Checkout is temporarily unavailable — try again shortly.")
+
+        if _has_customer:
+            with cols[-1]:
+                st.markdown("**Manage subscription**")
+                st.caption("Cancel, update your payment method, or view invoices.")
+                portal_url = billing.create_portal_session(
+                    _ledger, _billing_account, return_url=f"{_base}/Settings")
+                if portal_url:
+                    st.link_button("Open billing portal", portal_url,
+                                  use_container_width=True)
+    else:
+        st.caption("You're on the highest available plan.")
 
 # ── Host notes — only relevant to whoever is running this instance ──────────
 _platform_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()

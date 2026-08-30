@@ -10,6 +10,7 @@ call spending?*
 * :mod:`saas.meter`     — LangChain callback that prices calls as they happen
 * :mod:`saas.pricing`   — model rate card
 * :mod:`saas.tenant`    — the per-session object tying all of the above together
+* :mod:`saas.billing`   — Stripe Checkout/Portal: how a plan choice becomes a subscription
 """
 from saas.plans import (
     PLANS,
@@ -24,6 +25,7 @@ from saas.ledger import UsageLedger, get_ledger
 from saas.meter import UsageMeter
 from saas.pricing import cost_usd, format_usd, rate_for
 from saas.tenant import Tenant, engine_for_key
+from saas.billing import billing_enabled
 
 __all__ = [
     "PLANS", "Plan", "Entitlement", "Funding", "get_plan", "resolve_entitlement",
@@ -31,4 +33,5 @@ __all__ = [
     "UsageLedger", "get_ledger", "UsageMeter",
     "cost_usd", "format_usd", "rate_for",
     "Tenant", "engine_for_key",
+    "billing_enabled",
 ]

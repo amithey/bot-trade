@@ -146,6 +146,18 @@ class Tenant:
         return self.key.account_id
 
     @property
+    def billing_account_id(self) -> str:
+        """The account a subscription belongs to — the *person*, not the key.
+
+        ``account_id`` deliberately follows whichever key is funding calls
+        right now, so BYOK usage never lands on the operator's ledger rows.
+        Billing must NOT follow that: plugging in a different Anthropic key
+        must never look like switching to a different paying customer. This
+        is the same identity `plan`/`set_plan` already read and write.
+        """
+        return self._anon_account_id
+
+    @property
     def has_own_key(self) -> bool:
         return bool(self._user_key)
 

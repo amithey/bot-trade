@@ -58,6 +58,11 @@ rich==13.9.4                   # terminal output / logging
 tqdm==4.67.3                   # progress bars
 requests==2.31.0
 
+# --- Billing --------------------------------------------------------------
+# Required only when STRIPE_SECRET_KEY is configured; without it billing is
+# disabled and every account stays on the Free plan. See saas/billing.py.
+stripe==15.6.0
+
 # --- Authentication -----------------------------------------------------------
 # Required only when [auth] is configured in .streamlit/secrets.toml; without
 # it the app runs in open or shared-password mode. See DEPLOY.md section 2b.
