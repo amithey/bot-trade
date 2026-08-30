@@ -195,10 +195,9 @@ def confirm_checkout_session(ledger: UsageLedger, session_id: str) -> Optional[s
     if session.payment_status != "paid" and session.status != "complete":
         return None
 
-    account_id = (session.metadata or {}).get("bottrade_account_id") \
-        or session.client_reference_id
-    plan_id = (session.metadata or {}).get("plan_id") \
-        or plan_for_price_id(_first_price_id(session))
+    meta = _as_dict(session.metadata)
+    account_id = meta.get("bottrade_account_id") or session.client_reference_id
+    plan_id = meta.get("plan_id") or plan_for_price_id(_first_price_id(session))
     if not account_id or not plan_id:
         logger.warning(f"[billing] checkout session {session_id} confirmed "
                        f"but carries no account/plan metadata")
@@ -211,6 +210,26 @@ def confirm_checkout_session(ledger: UsageLedger, session_id: str) -> Optional[s
     logger.info(f"[billing] {account_id} confirmed on {plan_id} "
                f"(subscription {sub_id})")
     return plan_id
+
+
+def _as_dict(obj) -> dict:
+    """Safely read a Stripe metadata-like field as a plain dict.
+
+    A real ``session.metadata`` is a ``StripeObject``, not a dict — it
+    deliberately has no ``.get()``, and raises a pointed ``AttributeError``
+    telling you to call ``.to_dict()`` instead. This only surfaces against
+    the live API; a hand-built dict (as every test fixture here uses) never
+    exercises it, which is exactly how this one shipped — caught fixing this
+    module against a real Stripe test-mode checkout, not by the test suite.
+    """
+    if obj is None:
+        return {}
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    if isinstance(obj, dict):
+        return obj
+    return {}
 
 
 def _first_price_id(session) -> Optional[str]:

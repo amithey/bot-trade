@@ -185,10 +185,31 @@ def test_checkout_session_failure_does_not_raise(enabled, ledger, monkeypatch):
 # --------------------------------------------------------------------------- #
 # Confirming a checkout
 # --------------------------------------------------------------------------- #
+class _FakeMetadata:
+    """Mimics the real stripe.StripeObject metadata field closely enough to
+    catch what a plain dict fake hides.
+
+    The live SDK's StripeObject deliberately has NO ``.get()`` — it raises an
+    AttributeError pointing at ``.to_dict()`` instead. billing.py originally
+    called ``.get()`` directly on `session.metadata`, which every test here
+    passed because the fake was a plain dict. It only broke against a real
+    Stripe test-mode checkout. This fake exists so that regression can't
+    hide again: it supports exactly what the real object supports.
+    """
+    def __init__(self, data: dict):
+        self._data = dict(data)
+
+    def to_dict(self) -> dict:
+        return dict(self._data)
+
+    def __bool__(self) -> bool:
+        return bool(self._data)
+
+
 def _fake_session(**overrides):
     base = dict(
         payment_status="paid", status="complete",
-        metadata={"bottrade_account_id": "acct1", "plan_id": "PRO"},
+        metadata=_FakeMetadata({"bottrade_account_id": "acct1", "plan_id": "PRO"}),
         client_reference_id="acct1",
         subscription=SimpleNamespace(id="sub_999"),
         line_items=None,
@@ -216,11 +237,19 @@ def test_confirm_rejects_an_unpaid_session(enabled, ledger, monkeypatch):
 
 
 def test_confirm_falls_back_to_client_reference_id(enabled, ledger, monkeypatch):
-    session = _fake_session(metadata={}, client_reference_id="acct2")
+    session = _fake_session(metadata=_FakeMetadata({}), client_reference_id="acct2")
     monkeypatch.setattr(billing.stripe.checkout.Session, "retrieve",
                         lambda *a, **kw: session)
     # No plan_id in metadata and no line_items to derive it from -> unresolvable.
     assert billing.confirm_checkout_session(ledger, "cs_x") is None
+
+
+def test_as_dict_handles_a_stripeobject_style_fake_with_no_get(enabled):
+    """Guards the exact regression found against a real Stripe checkout:
+    session.metadata is a StripeObject with no .get() at all."""
+    assert billing._as_dict(_FakeMetadata({"plan_id": "PRO"})) == {"plan_id": "PRO"}
+    assert billing._as_dict(None) == {}
+    assert billing._as_dict({"already": "a dict"}) == {"already": "a dict"}
 
 
 def test_confirm_handles_a_retrieve_failure(enabled, ledger, monkeypatch):
