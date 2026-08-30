@@ -139,7 +139,11 @@ class NotificationDispatcher:
         body = payload["message"]
         return f"{head}\n{body}"
 
-    def _send_telegram(self, payload: dict) -> None:
+    def _send_telegram(self, payload: dict) -> tuple[bool, str]:
+        """Best-effort send. Always returns rather than raising — callers on
+        the fire-and-forget path (``notify``) ignore the result; the
+        "Test Telegram" button in Settings (``test_telegram``) is the one
+        caller that actually needs to know whether it worked."""
         cfg = self._config
         url = (
             f"https://api.telegram.org/bot{cfg.telegram_bot_token.strip()}"
@@ -155,13 +159,16 @@ class NotificationDispatcher:
             req = urllib.request.Request(url, data=data, method="POST")
             with urllib.request.urlopen(req, timeout=6) as resp:
                 if resp.status != 200:
-                    logger.warning(
-                        "Telegram notify non-200: %s", resp.status
-                    )
+                    msg = f"Telegram responded {resp.status}"
+                    logger.warning("Telegram notify non-200: %s", resp.status)
+                    return False, msg
+            return True, "ok"
         except Exception as exc:  # noqa: BLE001
             logger.debug("Telegram notify failed: %s", exc)
+            return False, str(exc)
 
-    def _send_webhook(self, payload: dict) -> None:
+    def _send_webhook(self, payload: dict) -> tuple[bool, str]:
+        """Best-effort send — see ``_send_telegram`` docstring."""
         cfg = self._config
         url = cfg.webhook_url.strip()
         try:
@@ -173,9 +180,13 @@ class NotificationDispatcher:
             )
             with urllib.request.urlopen(req, timeout=6) as resp:
                 if resp.status >= 400:
+                    msg = f"Webhook responded {resp.status}"
                     logger.warning("Webhook notify status %s", resp.status)
+                    return False, msg
+            return True, "ok"
         except Exception as exc:  # noqa: BLE001
             logger.debug("Webhook notify failed: %s", exc)
+            return False, str(exc)
 
     # ─────────────────────────────────────────────────────────────────
     # Test ping — used by the Settings page "Send test" button
@@ -190,11 +201,14 @@ class NotificationDispatcher:
             "ticker": "", "level": "INFO", "meta": {},
             "ts": datetime.utcnow().isoformat() + "Z",
         }
-        try:
-            self._send_telegram(payload)
+        # _send_telegram never raises (it swallows every error itself), so
+        # this used to always report success regardless of what actually
+        # happened. Read its return value instead of wrapping it in a
+        # try/except that could never fire.
+        ok, detail = self._send_telegram(payload)
+        if ok:
             return True, "Telegram ping sent (check your chat)."
-        except Exception as exc:  # noqa: BLE001
-            return False, f"Telegram ping failed: {exc}"
+        return False, f"Telegram ping failed: {detail}"
 
     def test_webhook(self) -> tuple[bool, str]:
         cfg = self._config
@@ -205,8 +219,7 @@ class NotificationDispatcher:
             "ticker": "", "level": "INFO", "meta": {},
             "ts": datetime.utcnow().isoformat() + "Z",
         }
-        try:
-            self._send_webhook(payload)
+        ok, detail = self._send_webhook(payload)
+        if ok:
             return True, "Webhook ping sent."
-        except Exception as exc:  # noqa: BLE001
-            return False, f"Webhook ping failed: {exc}"
+        return False, f"Webhook ping failed: {detail}"
