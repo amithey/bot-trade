@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BotTrade — AI Trading Bot with a 38-Indicator Committee</title>
+<meta name="description" content="Paper-trade with a 38-indicator committee, an AI decision engine, and a full risk-management layer. Free to run forever in Committee mode.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
+<style>
+  :root {
+    --bg-deep: #000000;
+    --bg-panel: #0b0f14;
+    --bg-raised: #111820;
+    --border: #202833;
+    --border-hi: #34404f;
+    --text-dim: #8b98a8;
+    --text: #d8e1ec;
+    --text-hi: #ffffff;
+    --cyan: #00b7ff;
+    --green: #00c176;
+    --amber: #f5b544;
+    --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Cascadia Mono', monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background:
+      radial-gradient(circle at 10% 0%, rgba(0,183,255,0.10), transparent 24rem),
+      radial-gradient(circle at 92% 4%, rgba(0,193,118,0.07), transparent 22rem),
+      linear-gradient(180deg,#000000 0%, #020406 45%, #000000 100%);
+    min-height: 100vh;
+  }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 68rem; margin: 0 auto; padding: 0 1.5rem; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.4rem 0;
+  }
+  .brand { display: flex; align-items: center; gap: .7rem; }
+  .brand-mark {
+    width: 2.1rem; height: 2.1rem; border-radius: 6px;
+    background: linear-gradient(135deg, var(--cyan), #0077a8);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-weight: 800; font-size: .85rem;
+    color: #001420;
+  }
+  .brand-name { font-weight: 800; font-size: 1.05rem; letter-spacing: .02em; color: var(--text-hi); }
+  nav { display: flex; gap: 1.6rem; font-size: .88rem; color: var(--text-dim); }
+  nav a { color: var(--text-dim); }
+  nav a:hover { color: var(--text-hi); text-decoration: none; }
+
+  /* Hero */
+  .hero { padding: 4.5rem 0 3.5rem; text-align: center; }
+  .eyebrow {
+    display: inline-block; font-family: var(--font-mono); font-size: .68rem;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--cyan);
+    border: 1px solid rgba(0,183,255,.35); background: rgba(0,183,255,.08);
+    padding: .3rem .8rem; border-radius: 999px; margin-bottom: 1.4rem;
+  }
+  h1 {
+    font-size: clamp(2.1rem, 5vw, 3.2rem); font-weight: 800; line-height: 1.15;
+    margin: 0 0 1.1rem; color: var(--text-hi); text-wrap: balance;
+  }
+  h1 span { color: var(--cyan); }
+  .sub {
+    font-size: 1.08rem; color: var(--text-dim); max-width: 42rem;
+    margin: 0 auto 2.2rem; line-height: 1.65;
+  }
+  .cta-row { display: flex; gap: .9rem; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: .8rem 1.6rem; border-radius: 6px;
+    font-weight: 700; font-size: .92rem; letter-spacing: .01em;
+  }
+  .btn-primary { background: var(--cyan); color: #001420; }
+  .btn-primary:hover { background: #33c6ff; text-decoration: none; }
+  .btn-ghost { border: 1px solid var(--border-hi); color: var(--text); }
+  .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); text-decoration: none; }
+
+  /* Sections */
+  section { padding: 3.2rem 0; border-top: 1px solid var(--border); }
+  .section-head { text-align: center; margin-bottom: 2.4rem; }
+  .section-head h2 { font-size: 1.7rem; font-weight: 800; color: var(--text-hi); margin: 0 0 .5rem; }
+  .section-head p { color: var(--text-dim); max-width: 38rem; margin: 0 auto; }
+
+  /* Modes table */
+  .modes { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  th, td { padding: .85rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+  th {
+    font-family: var(--font-mono); font-size: .68rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-dim); font-weight: 600;
+    border-bottom: 1px solid var(--border-hi);
+  }
+  td.mode { font-weight: 700; color: var(--text-hi); white-space: nowrap; }
+  .tag-free {
+    display: inline-block; font-family: var(--font-mono); font-size: .68rem;
+    color: var(--green); background: rgba(0,193,118,.1);
+    border: 1px solid rgba(0,193,118,.35); border-radius: 4px; padding: .1rem .45rem;
+  }
+
+  /* Feature grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.1rem; }
+  .card {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.4rem;
+  }
+  .card .ico { font-size: 1.4rem; margin-bottom: .7rem; }
+  .card h3 { margin: 0 0 .5rem; font-size: 1rem; color: var(--text-hi); }
+  .card p { margin: 0; font-size: .88rem; color: var(--text-dim); line-height: 1.55; }
+
+  /* Pricing */
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.2rem; }
+  .plan {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.8rem; display: flex; flex-direction: column;
+  }
+  .plan.featured { border-color: var(--cyan); box-shadow: 0 0 0 1px rgba(0,183,255,.25); }
+  .plan-name { font-weight: 800; font-size: 1.1rem; color: var(--text-hi); margin-bottom: .3rem; }
+  .plan-price { font-family: var(--font-mono); font-size: 2rem; font-weight: 700; color: var(--text-hi); margin: .3rem 0; }
+  .plan-price span { font-size: .95rem; color: var(--text-dim); font-weight: 400; }
+  .plan-tagline { color: var(--text-dim); font-size: .86rem; margin-bottom: 1.1rem; min-height: 2.4em; }
+  .plan ul { list-style: none; padding: 0; margin: 0 0 1.4rem; flex: 1; }
+  .plan li {
+    font-size: .86rem; color: var(--text); padding: .4rem 0 .4rem 1.3rem;
+    position: relative; border-bottom: 1px solid var(--border);
+  }
+  .plan li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+  .plan li:last-child { border-bottom: none; }
+
+  /* Disclaimer */
+  .disclaimer {
+    background: var(--bg-raised); border: 1px solid var(--border-hi);
+    border-radius: 8px; padding: 1.1rem 1.3rem; font-size: .85rem;
+    color: var(--text-dim); line-height: 1.6;
+  }
+  .disclaimer strong { color: var(--amber); }
+
+  footer {
+    border-top: 1px solid var(--border); padding: 2.4rem 0 3rem;
+    font-size: .85rem; color: var(--text-dim);
+  }
+  .footer-grid {
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem;
+    margin-bottom: 1.6rem;
+  }
+  footer h4 {
+    font-family: var(--font-mono); font-size: .68rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--text-dim); margin: 0 0 .7rem;
+  }
+  footer ul { list-style: none; padding: 0; margin: 0; }
+  footer li { margin-bottom: .45rem; }
+  footer a { color: var(--text-dim); }
+  footer a:hover { color: var(--text-hi); }
+  .footer-bottom {
+    border-top: 1px solid var(--border); padding-top: 1.3rem;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: .8rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="brand-mark">BT</div>
+      <div class="brand-name">BotTrade</div>
+    </div>
+    <nav>
+      <a href="#how-it-works">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+      <a href="mailto:support@bottrade.app">Contact</a>
+    </nav>
+  </header>
+
+  <section class="hero" style="border-top:none; padding-top: 2rem;">
+    <span class="eyebrow">Paper trading · no real funds at risk</span>
+    <h1>An AI trading bot you can<br><span>actually watch decide</span>.</h1>
+    <p class="sub">
+      A 38-indicator technical committee, an AI decision engine backed by a
+      knowledge base, and a full risk layer — stop-loss, cooldowns, a daily
+      circuit breaker. Run it free forever in Committee mode, or bring your
+      own Anthropic key for AI-driven decisions.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#pricing">See pricing</a>
+      <a class="btn btn-ghost" href="https://github.com/amithey/bot-trade">View on GitHub</a>
+    </div>
+  </section>
+
+  <section id="how-it-works">
+    <div class="section-head">
+      <h2>Four ways to decide, one bot</h2>
+      <p>Switch strategy mode per session — from a free deterministic vote to a full analyst boardroom.</p>
+    </div>
+    <div class="modes">
+      <table>
+        <thead>
+          <tr><th>Mode</th><th>What decides</th><th>Cost</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mode">Committee</td>
+            <td>38 technical indicators vote; majority rules</td>
+            <td><span class="tag-free">Always free</span></td>
+          </tr>
+          <tr>
+            <td class="mode">AI</td>
+            <td>Claude alone, with retrieval over a trading knowledge base</td>
+            <td>1 call / cycle</td>
+          </tr>
+          <tr>
+            <td class="mode">Hybrid</td>
+            <td>Committee votes, Claude reviews the tally before acting</td>
+            <td>1 call / cycle</td>
+          </tr>
+          <tr>
+            <td class="mode">Boardroom</td>
+            <td>8 analyst personas plus a chairman, deliberating in parallel</td>
+            <td>~9 calls / cycle</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Built like a real desk, not a demo</h2>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="ico">🛡</div>
+        <h3>Automatic risk controls</h3>
+        <p>Stop-loss, take-profit, a consecutive-loss circuit breaker, a tilt cooldown after a bad trade, and a daily loss halt — all enforced without you watching the screen.</p>
+      </div>
+      <div class="card">
+        <div class="ico">📚</div>
+        <h3>A real knowledge base</h3>
+        <p>Ingests trading strategy content from YouTube and articles into a retrieval store, so the AI's reasoning is grounded in something more than a single prompt.</p>
+      </div>
+      <div class="card">
+        <div class="ico">⚡</div>
+        <h3>Instant backtesting</h3>
+        <p>The 38-indicator committee backtests years of daily data in under a second — fully vectorized, zero API calls — with a parameter-sweep optimizer.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🔑</div>
+        <h3>Bring your own key</h3>
+        <p>Use your own Anthropic API key for AI-driven modes. Your tokens bill to your own account, with a full spend breakdown per session.</p>
+      </div>
+      <div class="card">
+        <div class="ico">📊</div>
+        <h3>Live dashboard</h3>
+        <p>Watch every decision as it happens — portfolio, positions, trade history, and performance analytics (Sharpe, Sortino, drawdown) in real time.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🧪</div>
+        <h3>Paper trading, always</h3>
+        <p>Every position is virtual. No brokerage connection, no real money at risk — a place to test a strategy honestly before ever risking capital elsewhere.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div class="section-head">
+      <h2>Pricing</h2>
+      <p>Committee mode is free on every plan, forever — it makes no API calls at all.</p>
+    </div>
+    <div class="plans">
+      <div class="plan">
+        <div class="plan-name">Free</div>
+        <div class="plan-price">$0<span>/mo</span></div>
+        <div class="plan-tagline">The full 38-indicator committee, no card, no API key.</div>
+        <ul>
+          <li>Committee mode — unlimited</li>
+          <li>Backtesting &amp; strategy optimizer</li>
+          <li>1 live symbol, 5-minute cycle</li>
+          <li>A small taster of AI mode, on us</li>
+        </ul>
+        <a class="btn btn-ghost" href="mailto:support@bottrade.app?subject=BotTrade%20Free%20plan">Get started</a>
+      </div>
+      <div class="plan featured">
+        <div class="plan-name">Pro</div>
+        <div class="plan-price">$29<span>/mo</span></div>
+        <div class="plan-tagline">Every strategy mode, running on your own Anthropic key.</div>
+        <ul>
+          <li>AI, Hybrid, and the 9-seat Boardroom</li>
+          <li>10 live symbols, 1-minute cycle</li>
+          <li>Knowledge ingestion — YouTube, articles</li>
+          <li>You hold the API key; tokens bill to you</li>
+        </ul>
+        <a class="btn btn-primary" href="mailto:support@bottrade.app?subject=BotTrade%20Pro%20plan">Get started</a>
+      </div>
+      <div class="plan">
+        <div class="plan-name">Desk</div>
+        <div class="plan-price">$99<span>/mo</span></div>
+        <div class="plan-tagline">Desk-scale limits for running a real book.</div>
+        <ul>
+          <li>50 live symbols, 30-second cycle</li>
+          <li>Priority shared-decision cache warm-up</li>
+          <li>Full usage analytics and cost attribution</li>
+          <li>You hold the API key; tokens bill to you</li>
+        </ul>
+        <a class="btn btn-ghost" href="mailto:support@bottrade.app?subject=BotTrade%20Desk%20plan">Get started</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="section-head">
+      <h2>Good to know</h2>
+    </div>
+    <div class="disclaimer">
+      <strong>BotTrade is a paper-trading tool.</strong> It does not connect to a
+      brokerage, execute real trades, or manage real funds — every position is
+      virtual. Nothing in this product constitutes financial or investment
+      advice. AI-driven modes run on Anthropic's Claude models via the
+      Anthropic API; when you supply your own API key, usage bills directly
+      to your Anthropic account. Subscription plans grant access to the
+      BotTrade software and its strategy modes.
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="#how-it-works">How it works</a></li>
+          <li><a href="#pricing">Pricing</a></li>
+          <li><a href="https://github.com/amithey/bot-trade">GitHub</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Legal</h4>
+        <ul>
+          <li><a href="/terms.html">Terms of Service</a></li>
+          <li><a href="/privacy.html">Privacy Policy</a></li>
+          <li><a href="/refunds.html">Refund Policy</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Contact</h4>
+        <ul>
+          <li><a href="mailto:support@bottrade.app">support@bottrade.app</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 BotTrade. Paper trading only — not investment advice.</span>
+      <span>Built with Claude</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
