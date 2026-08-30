@@ -114,10 +114,14 @@ class Tenant:
         model: Optional[str] = None,
         ledger: Optional[UsageLedger] = None,
         knowledge_owner: Optional[str] = None,
+        reconcile_billing: bool = True,
     ) -> None:
         self._ledger = ledger or get_ledger()
         self._anon_account_id = account_id or "local"
         self._knowledge_owner = (knowledge_owner or "").strip() or None
+        #: Whether reading `plan` re-checks Stripe. Off for tests and for
+        #: callers that must not make a network call.
+        self._reconcile_billing = reconcile_billing
         self._model = model
         self._allow_platform_key = allow_platform_key
         self._user_key = keyvault.normalise(user_api_key)
@@ -187,7 +191,34 @@ class Tenant:
     # -- plan --------------------------------------------------------------
     @property
     def plan(self) -> Plan:
-        return get_plan(self._ledger.get_plan_id(self._anon_account_id))
+        """The plan this account is actually entitled to right now.
+
+        Reconciles against Stripe before answering. Without this the only
+        thing that ever noticed a cancellation or a failed renewal was a visit
+        to the Settings page, which is the one page a lapsed subscriber has no
+        reason to open — so they kept their entitlements, and kept spending the
+        operator's platform budget, indefinitely.
+
+        Cheap to call in a loop: ``sync_subscription_status`` re-checks Stripe
+        at most once per account per TTL and returns the ledger's value on any
+        failure, so a Stripe outage degrades to the last known plan rather than
+        locking a page render or a trading cycle.
+        """
+        return get_plan(self._synced_plan_id())
+
+    def _synced_plan_id(self) -> str:
+        """Ledger plan id, refreshed from Stripe when the TTL has expired."""
+        stored = self._ledger.get_plan_id(self._anon_account_id)
+        if not self._reconcile_billing:
+            return stored
+        try:
+            from saas import billing
+            return billing.sync_subscription_status(
+                self._ledger, self.billing_account_id)
+        except Exception as exc:                               # noqa: BLE001
+            # Entitlement must never be the reason a render or a cycle fails.
+            logger.debug(f"[tenant] plan reconciliation skipped: {exc}")
+            return stored
 
     def set_plan(self, plan_id: str) -> None:
         self._ledger.set_plan_id(self._anon_account_id, plan_id)

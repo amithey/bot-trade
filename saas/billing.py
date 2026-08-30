@@ -87,9 +87,32 @@ def purchasable_plans() -> list[str]:
     return list(_price_map().keys())
 
 
+#: Stripe's own default is 80 seconds. Reconciliation runs from
+#: ``Tenant.plan``, which the background trading loop reads every cycle, so an
+#: unreachable Stripe must fail fast rather than stall a trading decision for
+#: over a minute. Retries are capped for the same reason — the TTL cache means
+#: a missed check costs at most one interval, while a hung request costs a bar.
+_HTTP_TIMEOUT_SEC = 8.0
+_MAX_RETRIES = 1
+
+_http_configured = False
+
+
 def _client() -> None:
     """Point the SDK at the configured key. Called before every API use."""
+    global _http_configured
     stripe.api_key = settings.stripe_secret_key
+    if not _http_configured:
+        try:
+            from stripe._http_client import RequestsClient
+            stripe.default_http_client = RequestsClient(
+                timeout=_HTTP_TIMEOUT_SEC)
+        except Exception:                                      # noqa: BLE001
+            # A future SDK may move this; the bounded retry below still
+            # applies and a slow call is worse than an unconfigured one.
+            logger.debug("[billing] could not set an explicit HTTP timeout")
+        stripe.max_network_retries = _MAX_RETRIES
+        _http_configured = True
 
 
 # --------------------------------------------------------------------------- #
