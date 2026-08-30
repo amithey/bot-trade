@@ -66,7 +66,14 @@ jobs:
       # friends here would cost several minutes for no extra signal.
       - name: Audit pinned dependencies
         run: |
-          pip-audit -r requirements.txt --progress-spinner=off             --ignore-vuln PYSEC-2026-311             --ignore-vuln CVE-2026-45830             --ignore-vuln CVE-2026-45833             --ignore-vuln CVE-2026-45831             --ignore-vuln PYSEC-2026-2556             --ignore-vuln PYSEC-2025-194 \n            --ignore-vuln PYSEC-2026-3447
+          pip-audit -r requirements.txt --progress-spinner=off \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln CVE-2026-45830 \
+            --ignore-vuln CVE-2026-45833 \
+            --ignore-vuln CVE-2026-45831 \
+            --ignore-vuln PYSEC-2026-2556 \
+            --ignore-vuln PYSEC-2025-194 \
+            --ignore-vuln PYSEC-2026-3447
 
 # Known-and-accepted, re-check when a fix ships:
 #
