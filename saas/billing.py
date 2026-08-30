@@ -215,7 +215,20 @@ def confirm_checkout_session(ledger: UsageLedger, session_id: str) -> Optional[s
                        f"{session_id}: {exc}")
         return None
 
-    if session.payment_status != "paid" and session.status != "complete":
+    # The session has to be finished AND actually paid for. This was `and`,
+    # which only rejected when both were false — so a session that reached
+    # status="complete" with payment_status="unpaid" was granted the plan.
+    # That is not a hypothetical state: a card that clears the Checkout form
+    # but fails on the first invoice leaves exactly that, and the user still
+    # lands on the success URL.
+    if session.status != "complete":
+        return None
+    # "no_payment_required" is the legitimate zero-cost case (a full-coverage
+    # coupon, or a trial that charges nothing today).
+    if session.payment_status not in ("paid", "no_payment_required"):
+        logger.info(f"[billing] checkout session {session_id} is complete but "
+                    f"payment_status={session.payment_status!r} — not granting "
+                    f"a plan")
         return None
 
     meta = _as_dict(session.metadata)
@@ -228,6 +241,18 @@ def confirm_checkout_session(ledger: UsageLedger, session_id: str) -> Optional[s
 
     subscription = session.subscription
     sub_id = getattr(subscription, "id", None) or subscription
+
+    # The session is expanded with the subscription precisely so this can be
+    # checked, but only its id was ever read. A first invoice that fails
+    # leaves the subscription "incomplete" while the session still reports
+    # complete, so the session alone is not enough to prove entitlement.
+    sub_status = getattr(subscription, "status", None)
+    if sub_status is not None and sub_status not in _ACTIVE_SUBSCRIPTION_STATES:
+        logger.info(f"[billing] checkout session {session_id} confirmed but "
+                    f"subscription {sub_id} is {sub_status!r} — not granting "
+                    f"a plan")
+        return None
+
     ledger.set_plan_id(account_id, plan_id, stripe_subscription_id=sub_id)
     _touch_cache(account_id, plan_id)
     logger.info(f"[billing] {account_id} confirmed on {plan_id} "
@@ -294,6 +319,13 @@ def create_portal_session(
 # --------------------------------------------------------------------------- #
 # Reconciliation — catches cancellations/failed renewals without a webhook
 # --------------------------------------------------------------------------- #
+#: Subscription states that entitle an account to its paid plan.
+#: "trialing" counts — a trial is a real subscription that has not billed
+#: yet. "incomplete", "past_due", "unpaid" and "canceled" deliberately do
+#: not; sync_subscription_status already lists only `status="active"`, so
+#: this keeps the checkout path and the reconciliation path agreeing.
+_ACTIVE_SUBSCRIPTION_STATES = frozenset({"active", "trialing"})
+
 _SYNC_TTL_SEC = 300.0
 _sync_cache: dict[str, tuple[float, str]] = {}
 _sync_lock = threading.Lock()
