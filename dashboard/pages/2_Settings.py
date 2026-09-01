@@ -15,7 +15,7 @@ if str(_ROOT) not in _sys.path:
 from dashboard._identity import account_id, auth_mode, identifies_individuals
 from dashboard._shared import (
     DEFAULT_TICKERS, RISK_CHOICES,
-    apply_theme, current_engine, ensure_profile_in_session, get_tenant,
+    secure_page, current_engine, ensure_profile_in_session, get_tenant,
     get_user_api_key,
     save_profile, set_user_api_key, validate_ticker_symbol,
 )
@@ -27,7 +27,7 @@ from config.settings import settings as _settings
 
 st.set_page_config(page_title="BotTrade - Settings", page_icon=":material/settings:", layout="wide",
                    initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 
 st.markdown('<div class="page-title">SETTINGS</div>', unsafe_allow_html=True)

@@ -27,12 +27,12 @@ if str(_ROOT) not in _sys.path:
 
 from dashboard._shared import (
     BORDER, C_BUY, C_HOLD, C_SELL, CYAN, DEFAULT_TICKERS, TEXT, TEXT_DIM,
-    apply_theme, ensure_profile_in_session,
+    secure_page, ensure_profile_in_session,
 )
 
 st.set_page_config(page_title="BotTrade - Scanner", page_icon=":material/filter_alt:",
                    layout="wide", initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 
 st.markdown('<div class="page-title">WATCHLIST SCANNER</div>',

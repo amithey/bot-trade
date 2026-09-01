@@ -16,7 +16,7 @@ if str(_ROOT) not in _sys.path:
 # ────────────────────────────────────────────────────────────────────────────
 
 from dashboard._identity import account_slug
-from dashboard._shared import ROOT, apply_theme, ensure_profile_in_session
+from dashboard._shared import ROOT, secure_page, ensure_profile_in_session
 
 _ALLOWED_HOSTS = {
     "youtube.com", "www.youtube.com", "m.youtube.com",
@@ -34,7 +34,7 @@ def _is_youtube_url(raw: str) -> bool:
 
 st.set_page_config(page_title="BotTrade - Knowledge", page_icon=":material/database:", layout="wide",
                    initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 
 st.markdown('<div class="page-title">KNOWLEDGE BASE</div>', unsafe_allow_html=True)

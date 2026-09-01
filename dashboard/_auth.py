@@ -187,7 +187,7 @@ _LOGIN_CSS = """
 def require_auth() -> None:
     """Render a login form and halt the page when not authenticated.
 
-    Call near the top of every page (after ``apply_theme``)."""
+    Call near the top of every page (after ``secure_page``)."""
     if not auth_enabled() or is_authed():
         return
 

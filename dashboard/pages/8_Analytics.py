@@ -22,13 +22,13 @@ import streamlit as st
 
 from dashboard._shared import (
     BG_PANEL, BORDER, C_BUY, C_HOLD, C_SELL, CYAN, GRID, TEXT, TEXT_DIM,
-    apply_theme, ensure_portfolio_in_session, ensure_profile_in_session,
+    secure_page, ensure_portfolio_in_session, ensure_profile_in_session,
 )
 
 st.set_page_config(page_title="BotTrade - Analytics",
                    page_icon=":material/analytics:",
                    layout="wide", initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 ensure_portfolio_in_session()
 

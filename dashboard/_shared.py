@@ -486,13 +486,28 @@ hr {{ border-color:{BORDER} !important; margin:0.4rem 0 !important; }}
 """
 
 
-def apply_theme() -> None:
-    st.markdown(_THEME_CSS, unsafe_allow_html=True)
-    # Identity gate. Halts the page with a sign-in screen in `oidc` mode, falls
-    # back to the legacy shared-password form in `password` mode, and is a
-    # no-op locally. See dashboard/_identity.py.
+def secure_page() -> None:
+    """Enforce access, then style the page. Every page must call this first.
+
+    This is the *only* thing standing between an unauthenticated visitor and a
+    page's contents. Streamlit runs each file in pages/ independently, so there
+    is no central router to gate — the guarantee is simply that every page
+    calls this before it touches data.
+
+    It was called `secure_page`, which described the cosmetic half and hid the
+    half that matters. The risk with that name was specific: a future page that
+    wanted data but not styling would have had no reason to call it, and would
+    have served an unauthenticated visitor while looking perfectly correct. The
+    name now says what skipping it costs.
+
+    Halts with a sign-in screen in `oidc` mode, falls back to the shared
+    password form in `password` mode, and is a no-op locally.
+    See dashboard/_identity.py.
+    """
     from dashboard._identity import render_account_chip, require_login
+    # Gate first: a halted page should never have rendered anything.
     require_login()
+    st.markdown(_THEME_CSS, unsafe_allow_html=True)
     render_account_chip()
 
 

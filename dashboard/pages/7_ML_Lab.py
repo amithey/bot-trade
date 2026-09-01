@@ -26,12 +26,12 @@ if str(_ROOT) not in _sys.path:
 
 from dashboard._shared import (
     BORDER, C_BUY, C_HOLD, C_SELL, CYAN, DEFAULT_TICKERS, TEXT, TEXT_DIM,
-    apply_theme, ensure_portfolio_in_session, ensure_profile_in_session,
+    secure_page, ensure_portfolio_in_session, ensure_profile_in_session,
 )
 
 st.set_page_config(page_title="BotTrade - ML Lab", page_icon=":material/model_training:",
                    layout="wide", initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 ensure_portfolio_in_session()
 

@@ -15,14 +15,14 @@ if str(_ROOT) not in _sys.path:
 
 from dashboard._shared import (
     BG, C_BUY, C_SELL, GRID,
-    apply_theme, current_engine, ensure_logs_in_session,
+    secure_page, current_engine, ensure_logs_in_session,
     ensure_portfolio_in_session,
     ensure_profile_in_session, pump_toasts,
 )
 
 st.set_page_config(page_title="BotTrade - Portfolio", page_icon=":material/account_balance:", layout="wide",
                    initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 ensure_portfolio_in_session()
 ensure_logs_in_session()

@@ -32,12 +32,12 @@ if str(_ROOT) not in _sys.path:
 
 from dashboard._shared import (
     BORDER, C_BUY, C_HOLD, C_SELL, CYAN, DEFAULT_TICKERS,
-    apply_theme, ensure_profile_in_session,
+    secure_page, ensure_profile_in_session,
 )
 
 st.set_page_config(page_title="BotTrade - Market Research", page_icon=":material/manage_search:",
                    layout="wide", initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 
 st.markdown('<div class="page-title">MARKET RESEARCH</div>', unsafe_allow_html=True)

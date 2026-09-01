@@ -23,7 +23,7 @@ import streamlit as st
 
 from dashboard._shared import (
     AMBER, BG_PANEL, BORDER, C_BUY, CYAN, GRID, TEXT, TEXT_DIM,
-    apply_theme, ensure_profile_in_session, get_tenant,
+    secure_page, ensure_profile_in_session, get_tenant,
 )
 from decision_engine.decision_cache import get_decision_cache
 from saas.ledger import get_ledger
@@ -33,7 +33,7 @@ from trading.registry import get_registry
 
 st.set_page_config(page_title="BotTrade - Usage", page_icon=":material/receipt_long:",
                    layout="wide", initial_sidebar_state="expanded")
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 
 st.markdown('<div class="page-title">USAGE &amp; BILLING</div>', unsafe_allow_html=True)

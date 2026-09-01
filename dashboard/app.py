@@ -30,7 +30,7 @@ from dashboard._shared import (
     BG_DEEP, BG_PANEL, BORDER, C_BUY, C_HOLD, C_SELL, CUSTOM_LABEL, CYAN,
     DEFAULT_TICKERS, GRID, RISK_CHOICES, TEXT, TEXT_DIM, TEXT_HI,
     account_id as _account_id,
-    apply_theme, ensure_event_buffer, ensure_portfolio_in_session,
+    secure_page, ensure_event_buffer, ensure_portfolio_in_session,
     ensure_profile_in_session, engine_capacity_message, get_live_engine,
     get_tenant, pump_events, save_portfolio, save_profile,
 )
@@ -62,7 +62,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-apply_theme()
+secure_page()
 ensure_profile_in_session()
 ensure_portfolio_in_session()
 ensure_event_buffer()

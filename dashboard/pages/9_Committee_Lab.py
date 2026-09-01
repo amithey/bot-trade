@@ -19,12 +19,12 @@ from plotly.subplots import make_subplots
 
 from dashboard._shared import (
     BORDER, C_BUY, C_SELL, CYAN, DEFAULT_TICKERS, GRID, TEXT, TEXT_DIM,
-    TEXT_HI, apply_theme,
+    TEXT_HI, secure_page,
 )
 
 st.set_page_config(page_title="Committee Lab", layout="wide",
                    page_icon=":material/how_to_vote:")
-apply_theme()
+secure_page()
 
 st.markdown('<div class="page-title">🗳 Committee Lab</div>',
             unsafe_allow_html=True)
