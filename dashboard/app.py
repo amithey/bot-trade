@@ -67,6 +67,21 @@ ensure_profile_in_session()
 ensure_portfolio_in_session()
 ensure_event_buffer()
 
+# ── Arriving from the landing page with a plan in mind ───────────────────────
+# The pricing buttons link here as ?plan=PRO rather than straight to Stripe:
+# a Checkout Session only grants a plan if it carries bottrade_account_id, and
+# that is only knowable once someone has signed in. So the intent rides in on
+# the URL and gets handed to Settings, which is where checkout actually runs.
+#
+# Read after secure_page() on purpose — in oidc mode the sign-in redirect
+# happens first, and the parameter survives it.
+_wanted_plan = (st.query_params.get("plan") or "").strip().upper()
+if _wanted_plan:
+    st.query_params.clear()   # don't re-trigger on every rerun
+    if _wanted_plan in ("PRO", "DESK"):
+        st.session_state["_bt_pending_plan"] = _wanted_plan
+        st.switch_page("pages/2_Settings.py")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Engine + auto-refresh
 #

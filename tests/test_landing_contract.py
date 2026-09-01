@@ -1,0 +1,115 @@
+"""
+The landing page and the app have to agree, and nothing else checks it.
+
+The pricing buttons deliberately do NOT go straight to Stripe. A Checkout
+Session only grants a plan if it carries `bottrade_account_id`, and that is
+only knowable once someone has signed in — so a Payment Link opened from a
+static page would take the money and then fail confirmation, leaving a
+customer charged and entitled to nothing.
+
+Instead the buttons carry ?plan=<ID> into the app, which hands it to
+Settings. That is a contract spread across three files with no type system
+holding it together: an HTML data attribute, a query-parameter read, and a
+session-state key. These tests are what keeps the halves in step.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).resolve().parent.parent
+_INDEX = _ROOT / "landing" / "index.html"
+_APP = _ROOT / "dashboard" / "app.py"
+_SETTINGS = _ROOT / "dashboard" / "pages" / "2_Settings.py"
+
+_SESSION_KEY = "_bt_pending_plan"
+
+
+@pytest.fixture(scope="module")
+def html() -> str:
+    return _INDEX.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# The landing page must not sell directly
+# --------------------------------------------------------------------------- #
+def test_no_stripe_payment_links_on_the_landing_page(html):
+    """A payment started here cannot carry an account id, so confirmation
+    would refuse it — after the card was charged."""
+    for marker in ("buy.stripe.com", "checkout.stripe.com", "price_"):
+        assert marker not in html, (
+            f"{marker!r} found on the landing page: a payment begun before "
+            f"sign-in has no bottrade_account_id and will fail confirmation"
+        )
+
+
+def test_every_pricing_cta_is_tagged_with_a_plan(html):
+    plans = set(re.findall(r'data-plan="([A-Z]+)"', html))
+    assert plans == {"FREE", "PRO", "DESK"}, plans
+
+
+def test_ctas_keep_a_working_fallback_before_the_app_url_is_set(html):
+    """APP_URL ships empty, so the page must never contain a dead link."""
+    assert 'const APP_URL = "";' in html
+    for m in re.finditer(r'data-plan="[A-Z]+"', html):
+        anchor = html[max(0, m.start() - 400):m.end()]
+        assert "href=" in anchor and "mailto:" in anchor
+
+
+def test_the_support_address_is_real(html):
+    assert "bottrade.app" not in html, "placeholder address is back"
+    assert "heymans.amit@gmail.com" in html
+
+
+@pytest.mark.parametrize("page", ["index.html", "terms.html", "privacy.html",
+                                   "refunds.html"])
+def test_no_placeholder_address_anywhere_in_the_landing_site(page):
+    text = (_ROOT / "landing" / page).read_text(encoding="utf-8")
+    assert "bottrade.app" not in text
+
+
+# --------------------------------------------------------------------------- #
+# The app picks the parameter up
+# --------------------------------------------------------------------------- #
+def test_app_reads_the_plan_query_parameter():
+    src = _APP.read_text(encoding="utf-8")
+    assert 'st.query_params.get("plan")' in src
+
+
+def test_app_reads_the_plan_only_after_the_access_gate():
+    """In oidc mode the sign-in redirect happens inside secure_page(); reading
+    the parameter before it would lose the visitor's choice."""
+    src = _APP.read_text(encoding="utf-8")
+    assert src.index("secure_page()") < src.index('st.query_params.get("plan")')
+
+
+def test_app_clears_the_parameter_so_it_does_not_refire():
+    src = _APP.read_text(encoding="utf-8")
+    tail = src.split('st.query_params.get("plan")', 1)[1][:600]
+    assert "st.query_params.clear()" in tail
+
+
+def test_app_hands_the_choice_over_on_the_agreed_key():
+    src = _APP.read_text(encoding="utf-8")
+    assert _SESSION_KEY in src
+
+
+def test_settings_consumes_the_same_key():
+    """Both halves must name the identical key — a typo here fails silently,
+    with the visitor simply landing on a generic page."""
+    assert _SESSION_KEY in _SETTINGS.read_text(encoding="utf-8")
+
+
+def test_settings_pops_rather_than_reads_the_key():
+    """Left in place it would re-announce on every rerun of the page."""
+    src = _SETTINGS.read_text(encoding="utf-8")
+    assert f'st.session_state.pop("{_SESSION_KEY}"' in src
+
+
+def test_only_purchasable_plans_trigger_the_redirect():
+    """?plan=FREE needs no checkout, and an unknown value must not redirect."""
+    src = _APP.read_text(encoding="utf-8")
+    tail = src.split('st.query_params.get("plan")', 1)[1][:600]
+    assert '("PRO", "DESK")' in tail

@@ -288,7 +288,8 @@
           <li>1 live symbol, 5-minute cycle</li>
           <li>A small taster of AI mode, on us</li>
         </ul>
-        <a class="btn btn-ghost" href="mailto:heymans.amit@gmail.com?subject=BotTrade%20Free%20plan">Get started</a>
+        <a class="btn btn-ghost" href="mailto:heymans.amit@gmail.com?subject=BotTrade%20Free%20plan"
+           data-plan="FREE">Get started</a>
       </div>
       <div class="plan featured">
         <div class="plan-name">Pro</div>
@@ -300,7 +301,8 @@
           <li>Knowledge ingestion — YouTube, articles</li>
           <li>You hold the API key; tokens bill to you</li>
         </ul>
-        <a class="btn btn-primary" href="mailto:heymans.amit@gmail.com?subject=BotTrade%20Pro%20plan">Get started</a>
+        <a class="btn btn-primary" href="mailto:heymans.amit@gmail.com?subject=BotTrade%20Pro%20plan"
+           data-plan="PRO">Get started</a>
       </div>
       <div class="plan">
         <div class="plan-name">Desk</div>
@@ -312,7 +314,8 @@
           <li>Full usage analytics and cost attribution</li>
           <li>You hold the API key; tokens bill to you</li>
         </ul>
-        <a class="btn btn-ghost" href="mailto:heymans.amit@gmail.com?subject=BotTrade%20Desk%20plan">Get started</a>
+        <a class="btn btn-ghost" href="mailto:heymans.amit@gmail.com?subject=BotTrade%20Desk%20plan"
+           data-plan="DESK">Get started</a>
       </div>
     </div>
   </section>
@@ -366,5 +369,43 @@
   </div>
 </footer>
 
+
+<!--
+  ─────────────────────────────────────────────────────────────────────────
+  ONE thing to change when the app is deployed: APP_URL below.
+
+  Why the buttons point at the app and NOT at a Stripe Payment Link:
+
+  saas/billing.py::confirm_checkout_session will only grant a plan when the
+  Checkout Session carries `bottrade_account_id` in its metadata. That id is
+  stamped when the session is created from inside the app, where we know who
+  is signed in. A Payment Link opened from this static page has no such
+  metadata — the visitor does not have an account yet — so the payment would
+  succeed, the subscription would exist in Stripe, and the confirmation step
+  would refuse it. The customer would be charged and receive nothing.
+
+  So the flow is deliberately: land here -> sign in to the app -> upgrade
+  from Settings, which is the path that already carries the account id.
+
+  Until APP_URL is set, the buttons keep their mailto: fallback, so the page
+  never ships a dead link.
+  ─────────────────────────────────────────────────────────────────────────
+-->
+<script>
+  // e.g. "https://bottrade.streamlit.app" — no trailing slash.
+  const APP_URL = "";
+
+  if (APP_URL) {
+    for (const el of document.querySelectorAll("a[data-plan]")) {
+      const url = new URL(APP_URL);
+      url.searchParams.set("plan", el.dataset.plan);
+      el.href = url.toString();
+      el.textContent = el.dataset.plan === "FREE" ? "Start free" : "Get started";
+    }
+    for (const el of document.querySelectorAll("a[data-app-link]")) {
+      el.href = APP_URL;
+    }
+  }
+</script>
 </body>
 </html>

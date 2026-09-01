@@ -158,6 +158,16 @@ if billing.billing_enabled():
     _success_url = f"{_base}/Settings?session_id={{CHECKOUT_SESSION_ID}}"
     _cancel_url = f"{_base}/Settings"
 
+    # Someone who clicked a specific plan on the landing page arrived here via
+    # app.py, which parked their choice in session state. Say so, rather than
+    # dropping them into a generic list and making them find it again.
+    _pending = st.session_state.pop("_bt_pending_plan", None)
+    if _pending and _pending in PLANS:
+        if _pending == ent.plan.id:
+            st.success(f"You're already on {PLANS[_pending].name}.", icon="✅")
+        else:
+            st.info(f"Continue to **{PLANS[_pending].name}** below.", icon="🛒")
+
     _purchasable = [p for p in billing.purchasable_plans() if p != ent.plan.id]
     _has_customer = bool(_ledger.get_stripe_customer_id(_billing_account))
     _slots = len(_purchasable) + (1 if _has_customer else 0)
