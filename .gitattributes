@@ -1,0 +1,7 @@
+# Shell scripts must always check out with LF, regardless of a contributor's
+# local core.autocrlf. A shebang line ending in \r fails at runtime on Linux
+# ("bad interpreter: /bin/sh^M: no such file or directory") — this is what
+# stops docker/entrypoint.sh from silently breaking the image for whoever
+# checks it out next with autocrlf=true (Windows' common default, and this
+# repo's own local setting).
+*.sh text eol=lf

@@ -366,14 +366,21 @@ guessable, so **something** must gate the app before real users touch it.
 
 OIDC's `client_secret` and `cookie_secret` live in
 `.streamlit/secrets.toml`, not `.env`, and Fly has no host bind-mount to
-carry that file in — set it up once the app is running: `fly ssh console`,
-then create `/app/.streamlit/secrets.toml` on the mounted volume by hand
-(it survives redeploys once it's there, the same as everything else under
-`/app/data` — though note `.streamlit/` itself isn't on the volume by
-default, so put it under `/app/data/.streamlit/` and adjust
-`STREAMLIT_CONFIG_DIR` accordingly, or extend the `[mounts]` block in
-`fly.toml`). This only matters once you actually enable OIDC — skip it for
-an initial deploy in open or password mode.
+carry that file in the way `docker-compose.yml`'s commented-out volume line
+does. Once you've written a real `.streamlit/secrets.toml` locally (section
+2b, steps 1–3), ship its *contents* as one secret and the container writes
+the file itself on boot (`docker/entrypoint.sh`, wired into the
+`ENTRYPOINT` in the `Dockerfile`):
+
+```bash
+fly secrets set --app <your-app> \
+  BOTTRADE_STREAMLIT_SECRETS="$(cat .streamlit/secrets.toml)"
+fly deploy --app <your-app>
+```
+
+This only matters once you actually enable OIDC — skip it for an initial
+deploy in open or password mode, exactly as this repo's own first Fly
+deploy did.
 
 **5. Deploy:**
 

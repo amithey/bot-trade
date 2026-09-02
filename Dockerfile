@@ -38,7 +38,8 @@ COPY . /app
 
 # Create non-root user with the same UID we expect from a typical host bind
 # mount. Switching to it after copying keeps the build fast.
-RUN useradd -ms /bin/bash --uid 1000 bottrade \
+RUN chmod +x /app/docker/entrypoint.sh \
+    && useradd -ms /bin/bash --uid 1000 bottrade \
     && mkdir -p /app/data /app/logs \
     && chown -R bottrade:bottrade /app
 USER bottrade
@@ -57,8 +58,13 @@ ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS http://localhost:8501/_stcore/health || exit 1
 
-# tini handles signal forwarding cleanly so docker stop doesn't hang
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# tini handles signal forwarding cleanly so docker stop doesn't hang.
+# entrypoint.sh runs first — on most hosts (docker-compose with the secrets
+# bind-mount) it's a no-op and falls straight through to CMD; on a host with
+# no way to bind-mount a host file (Fly, Railway, Render) it materialises
+# .streamlit/secrets.toml from BOTTRADE_STREAMLIT_SECRETS first. See
+# docker/entrypoint.sh and DEPLOY.md section 2b.
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker/entrypoint.sh"]
 
 # `python -X utf8` keeps Hebrew / emoji clean on the file paths during ingest.
 CMD ["python", "-X", "utf8", "-m", "streamlit", "run", "dashboard/app.py", \
