@@ -1,0 +1,61 @@
+# =============================================================================
+# BotTrade — Fly.io app configuration
+# =============================================================================
+# This file is read by `fly launch` / `fly deploy`. It does NOT contain
+# secrets — those go in via `fly secrets set` (see DEPLOY.md section 4).
+#
+# `app` below is a placeholder. Fly app names are globally unique across every
+# Fly account, so `fly launch` will prompt you to confirm or change it the
+# first time you run it — that's expected, just accept its suggestion or type
+# your own.
+# =============================================================================
+
+app = "bottrade"
+primary_region = "iad"  # us-east (Ashburn, VA) — change to whatever is closest to you
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  BOTTRADE_ENV = "production"
+  # Streamlit reads these from the process environment directly; the
+  # Dockerfile already bakes the address/port/headless flags, this just
+  # keeps them explicit for anyone reading the Fly config.
+  STREAMLIT_SERVER_ADDRESS = "0.0.0.0"
+  STREAMLIT_SERVER_PORT = "8501"
+
+# Persistent volume — this is what makes Fly different from Streamlit Cloud.
+# `data/` (accounts, portfolios, the usage/billing ledger, the RAG index, ML
+# models) survives every deploy and restart instead of resetting to empty.
+#
+# The volume itself does not exist until you create it once:
+#   fly volumes create bottrade_data --size 5 --region <same as primary_region>
+# Then this mount picks it up on every deploy automatically.
+[mounts]
+  source = "bottrade_data"
+  destination = "/app/data"
+
+[http_service]
+  internal_port = 8501
+  force_https = true
+  # `auto_stop_machines = false` is not optional here. Fly's default suspends
+  # a machine after a few minutes with no HTTP traffic — fine for a static
+  # site, wrong for this app: a live bot runs its trading loop on a
+  # background daemon thread (trading/live_engine.py) that keeps placing
+  # decisions whether or not anyone has the dashboard open. Auto-stop would
+  # silently pause every user's bot the moment they close the tab.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "40s"
+    method = "GET"
+    path = "/_stcore/health"
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 1

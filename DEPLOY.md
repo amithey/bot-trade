@@ -310,19 +310,87 @@ the bot still works, you just won't get pings.
 
 ### Fly.io
 
-Fly handles a single-container deploy gracefully:
+`fly.toml` in the repo root is already written for this app — it builds from
+the Dockerfile, mounts a persistent volume at `/app/data` (this is the whole
+point of Fly over Streamlit Community Cloud: accounts, portfolios, the
+billing ledger and the RAG index survive a redeploy instead of resetting to
+empty), and disables auto-stop so the background trading loop keeps running
+between page views.
+
+**1. Install the CLI and sign in** (opens a browser — this step is yours,
+not something to script):
 
 ```bash
-fly launch --no-deploy             # creates fly.toml — pick "yes" to use Dockerfile
-fly secrets set ANTHROPIC_API_KEY=sk-ant-... BOTTRADE_ENV=production
-fly secrets set BOTTRADE_AUTH_PASSWORD_HASH=...  BOTTRADE_AUTH_HASH_SALT=...
-fly volumes create bottrade_data --size 5 --region <your-region>
-# Edit fly.toml to mount the volume at /app/data
+# Windows PowerShell
+iwr https://fly.io/install.ps1 -useb | iex
+# macOS / Linux
+curl -L https://fly.io/install.sh | sh
+
+fly auth login
+```
+
+**2. Claim the app name.** `bottrade` in `fly.toml` is a placeholder — Fly
+app names are global across every account, so it is almost certainly taken.
+`fly launch` detects the existing `fly.toml` and will prompt to confirm or
+change the name; accept its suggestion or pick your own, but say **no** when
+it asks to overwrite `fly.toml` — the one in the repo already has the volume
+mount and the auto-stop setting configured.
+
+```bash
+fly launch --no-deploy
+```
+
+**3. Create the persistent volume** — same region as `primary_region` in
+`fly.toml`:
+
+```bash
+fly volumes create bottrade_data --size 5 --region iad
+```
+
+**4. Set secrets** — every value from your `.env` that isn't already a
+plain default in `fly.toml`'s `[env]` block. Names must match
+`config/settings.py` exactly (case-insensitive, but keep it consistent):
+
+```bash
+fly secrets set \
+  ANTHROPIC_API_KEY=sk-ant-... \
+  STRIPE_SECRET_KEY=sk_live_... \
+  STRIPE_PRICE_ID_PRO=price_... \
+  STRIPE_PRICE_ID_DESK=price_... \
+  BOTTRADE_BASE_URL=https://<your-app>.fly.dev
+```
+
+Add `BOTTRADE_AUTH_PASSWORD_HASH` / `BOTTRADE_AUTH_HASH_SALT` too if you're
+running password mode instead of OIDC (see section 2b) — Fly URLs are
+guessable, so **something** must gate the app before real users touch it.
+
+OIDC's `client_secret` and `cookie_secret` live in
+`.streamlit/secrets.toml`, not `.env`, and Fly has no host bind-mount to
+carry that file in — set it up once the app is running: `fly ssh console`,
+then create `/app/.streamlit/secrets.toml` on the mounted volume by hand
+(it survives redeploys once it's there, the same as everything else under
+`/app/data` — though note `.streamlit/` itself isn't on the volume by
+default, so put it under `/app/data/.streamlit/` and adjust
+`STREAMLIT_CONFIG_DIR` accordingly, or extend the `[mounts]` block in
+`fly.toml`). This only matters once you actually enable OIDC — skip it for
+an initial deploy in open or password mode.
+
+**5. Deploy:**
+
+```bash
 fly deploy
 ```
 
-Fly auto-provisions HTTPS at `https://<app>.fly.dev`. **Always set
-the auth hash** — Fly URLs are guessable.
+Fly auto-provisions HTTPS at `https://<your-app>.fly.dev`. **Update**
+`BOTTRADE_BASE_URL` (step 4) and `landing/index.html`'s `APP_URL` **to
+match this exact URL** once you know it — Stripe's redirect and the landing
+page's pricing buttons both depend on it being right.
+
+**Cost note:** the `[[vm]]` block in `fly.toml` requests 2 GB RAM (ChromaDB
++ sentence-transformers need it warm), and `min_machines_running = 1` keeps
+it up around the clock for the trading loop. That combination is past what
+Fly's free allowance covers — expect a small monthly charge, not a free
+deployment.
 
 ### Railway / Render
 
