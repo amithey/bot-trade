@@ -50,12 +50,26 @@ def test_every_pricing_cta_is_tagged_with_a_plan(html):
     assert plans == {"FREE", "PRO", "DESK"}, plans
 
 
-def test_ctas_keep_a_working_fallback_before_the_app_url_is_set(html):
-    """APP_URL ships empty, so the page must never contain a dead link."""
-    assert 'const APP_URL = "";' in html
+def test_ctas_keep_a_mailto_fallback_in_the_markup(html):
+    """The mailto href is the anchor's real `href` regardless of what
+    APP_URL is set to — the script only overwrites it client-side once the
+    page has loaded, so a visitor with JS disabled (or a scraper, or a
+    slow connection reading the page before the script runs) always sees a
+    working link, never a dead one."""
     for m in re.finditer(r'data-plan="[A-Z]+"', html):
         anchor = html[max(0, m.start() - 400):m.end()]
         assert "href=" in anchor and "mailto:" in anchor
+
+
+def test_app_url_is_either_unset_or_a_real_https_origin(html):
+    """Before deploy this is `""`; after deploy it must be the app's actual
+    origin with no path or trailing slash, since the script builds on it
+    with `new URL(APP_URL)` and appends `?plan=`."""
+    m = re.search(r'const APP_URL = "([^"]*)";', html)
+    assert m, "APP_URL assignment not found"
+    value = m.group(1)
+    if value:
+        assert re.fullmatch(r"https://[a-z0-9.-]+\.fly\.dev", value), value
 
 
 def test_the_support_address_is_real(html):
