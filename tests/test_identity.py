@@ -22,15 +22,35 @@ import streamlit as st
 from config.user_profile import UserProfile
 from dashboard import _identity
 
+#: Captured before the autouse fixture below ever patches the name, so the
+#: one test that needs the real implementation (not the "unconfigured"
+#: default every other test gets) can restore it deliberately.
+_REAL_AUTH_SECRETS = _identity._auth_secrets
+
 
 @pytest.fixture(autouse=True)
 def clean_session(monkeypatch):
-    """Fresh session state and no ambient auth config for every test."""
+    """Fresh session state and no ambient auth config for every test.
+
+    ``_auth_secrets`` defaults to "unconfigured" via monkeypatch rather than
+    relying on the real ``st.secrets`` raising because no
+    ``.streamlit/secrets.toml`` exists. That worked as an isolation
+    mechanism only by accident — on any machine that actually has a real
+    secrets file (this project's own dev machine, once OIDC was set up for
+    the live deployment), every "no config" test below started reading real
+    config and asserting the wrong mode. A test must not depend on what
+    happens to be sitting on the filesystem outside the test.
+
+    Tests that need a configured provider override this again themselves
+    (`_fake_user()` or a direct `monkeypatch.setattr` on `_auth_secrets`),
+    and the later call simply wins for the rest of that test.
+    """
     try:
         st.session_state.clear()
     except Exception:                                          # noqa: BLE001
         pass
     monkeypatch.delenv("BOTTRADE_AUTH_PASSWORD_HASH", raising=False)
+    monkeypatch.setattr(_identity, "_auth_secrets", lambda: None)
     yield
     try:
         st.session_state.clear()
@@ -54,8 +74,21 @@ def test_no_config_is_open_mode():
     assert _identity.account_id() == "local"
 
 
-def test_missing_secrets_file_does_not_raise():
-    """st.secrets raises StreamlitSecretNotFoundError with no secrets.toml."""
+def test_missing_secrets_file_does_not_raise(monkeypatch):
+    """st.secrets raises StreamlitSecretNotFoundError with no secrets.toml.
+
+    Simulates the raise directly against the *real* ``_auth_secrets``
+    rather than depending on no real ``.streamlit/secrets.toml`` existing
+    on whatever machine runs this — this project's own dev machine has a
+    real one once OIDC is configured for the live deployment, and this test
+    must still exercise the actual try/except, not the autouse default.
+    """
+    class _RaisingSecrets:
+        def __contains__(self, key):
+            raise RuntimeError("simulated: no secrets file")
+
+    monkeypatch.setattr(_identity, "_auth_secrets", _REAL_AUTH_SECRETS)
+    monkeypatch.setattr(_identity.st, "secrets", _RaisingSecrets())
     assert _identity.oidc_configured() is False
     assert _identity.is_logged_in() is False
 

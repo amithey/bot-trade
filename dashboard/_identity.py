@@ -202,17 +202,48 @@ def account_slug(ident: Optional[str] = None) -> str:
 _LOGIN_CSS = """
 <style>
 .bt-login-wrap { display:flex; align-items:center; justify-content:center;
-                 min-height:56vh; }
+                 min-height:60vh; }
 .bt-login-card { background:linear-gradient(180deg,#0b0f14,#06090c);
                  border:1px solid #202833; border-top:1px solid #34404f;
-                 border-radius:14px; padding:1.8rem 2rem;
-                 box-shadow:0 22px 70px rgba(0,0,0,0.5); min-width:340px; }
-.bt-login-title { color:#fff; font-family:'Aptos Display','Segoe UI',sans-serif;
-                  font-weight:850; font-size:1.05rem; letter-spacing:.16em;
+                 border-radius:3px; padding:2rem 2.2rem 1.8rem;
+                 min-width:360px; position:relative; overflow:hidden; }
+/* A single amber edge along the top — the same accent line every panel in
+   the app carries, so this card reads as the app's front door rather than
+   a generic auth form bolted onto the side. */
+.bt-login-card::before {
+    content:""; position:absolute; top:0; left:0; right:0; height:2px;
+    background:linear-gradient(90deg, transparent, #ffab2e, transparent);
+}
+.bt-login-mark { width:40px; height:40px; border-radius:3px;
+                 background:linear-gradient(145deg,rgba(255,171,46,.22),rgba(47,191,113,.14));
+                 border:1px solid rgba(255,171,46,.4);
+                 display:flex; align-items:center; justify-content:center;
+                 font-family:var(--font-mono,'JetBrains Mono',monospace);
+                 color:#fff; font-weight:900; font-size:.9rem;
+                 margin:0 0 1.1rem 0; }
+.bt-login-title { color:#fff; font-family:var(--font-ui,'Inter','Segoe UI',sans-serif);
+                  font-weight:850; font-size:1.25rem; letter-spacing:.14em;
                   text-transform:uppercase; margin:0 0 .5rem 0; }
-.bt-login-sub { color:#8b98a8; font-family:'IBM Plex Mono',monospace;
-                font-size:.68rem; letter-spacing:.10em; line-height:1.7;
-                margin:0 0 1.2rem 0; }
+.bt-login-sub { color:#8b98a8; font-family:var(--font-mono,'JetBrains Mono',monospace);
+                font-size:.7rem; letter-spacing:.06em; line-height:1.7;
+                margin:0 0 1.4rem 0; }
+/* A live status line — the same heartbeat language the running dashboard
+   uses elsewhere — so the door to the app signals "this is a live system"
+   before you're even through it, not a static form. */
+@keyframes bt-login-pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50%     { opacity:.4; transform:scale(1.2); }
+}
+.bt-login-status { display:flex; align-items:center; gap:.5rem;
+                    margin:1.4rem 0 0 0; padding-top:1rem;
+                    border-top:1px solid #1a222c; }
+.bt-login-status .dot { width:7px; height:7px; border-radius:50%;
+                         background:#00c176;
+                         animation:bt-login-pulse 1.6s ease-in-out infinite; }
+.bt-login-status .txt { color:#5a7a98;
+                         font-family:var(--font-mono,'JetBrains Mono',monospace);
+                         font-size:.62rem; letter-spacing:.14em;
+                         text-transform:uppercase; }
 </style>
 """
 
@@ -246,6 +277,8 @@ def require_login() -> None:
     with mid:
         st.markdown('<div class="bt-login-wrap"><div class="bt-login-card">',
                     unsafe_allow_html=True)
+        st.markdown('<div class="bt-login-mark">BT</div>',
+                    unsafe_allow_html=True)
         st.markdown('<div class="bt-login-title">BotTrade</div>',
                     unsafe_allow_html=True)
         st.markdown(
@@ -276,6 +309,11 @@ def require_login() -> None:
                 f"Check that `Authlib>=1.3.2` is installed and that the "
                 f"`[auth]` block in `.streamlit/secrets.toml` is complete."
             )
+        st.markdown(
+            '<div class="bt-login-status"><span class="dot"></span>'
+            '<span class="txt">System online</span></div>',
+            unsafe_allow_html=True,
+        )
         st.markdown('</div></div>', unsafe_allow_html=True)
     st.stop()
 

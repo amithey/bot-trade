@@ -31,7 +31,12 @@ RISK_CHOICES    = ["Conservative", "Balanced", "Aggressive", "Micro-Scalp"]
 _TICKER_RE      = re.compile(r"^[A-Z0-9^][A-Z0-9.^=-]{0,14}$")
 CUSTOM_LABEL    = "Custom"
 
-# TradingView-style sharp dark palette
+# Deep terminal palette — a data-dense, hard-edged desk display (think the
+# black-and-amber glow of a Bloomberg terminal), not a soft SaaS dashboard.
+# AMBER is the hero accent for UI chrome (buttons, focus rings, brand marks);
+# CYAN stays narrowly scoped to AI/data-fetch stage pills, its existing
+# semantic role, so it reads as "the machine thinking" rather than "the
+# brand" — one accent per meaning, not one accent for everything.
 BG_DEEP   = "#000000"
 BG_PANEL  = "#0b0f14"
 BG_RAISED = "#111820"
@@ -44,7 +49,7 @@ CYAN      = "#00b7ff"
 C_BUY     = "#00c176"
 C_SELL    = "#ff4d4f"
 C_HOLD    = "#b3bdc9"
-AMBER     = "#f5b544"
+AMBER     = "#ffab2e"
 GRID      = "rgba(54,64,78,0.42)"
 
 # Aliases kept so older pages don't break
@@ -86,17 +91,17 @@ section[data-testid="stMain"] > div:first-child {{ padding-left:1.2rem !importan
 html, body, [data-testid="stAppViewContainer"] {{ background:{BG_DEEP} !important; }}
 [data-testid="stAppViewContainer"] {{
     background:
-        radial-gradient(circle at 10% 0%, rgba(0,183,255,0.10), transparent 24rem),
-        radial-gradient(circle at 92% 4%, rgba(0,193,118,0.07), transparent 22rem),
+        radial-gradient(circle at 10% 0%, rgba(255,171,46,0.07), transparent 24rem),
+        radial-gradient(circle at 92% 4%, rgba(0,193,118,0.06), transparent 22rem),
         linear-gradient(180deg,#000000 0%, #020406 45%, #000000 100%) !important;
 }}
 [data-testid="stAppViewContainer"]::before {{
     content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
     background-image:
-        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
-    background-size:48px 48px,48px 48px;
-    mask-image:linear-gradient(180deg, rgba(0,0,0,0.45), transparent 70%);
+        linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.026) 1px, transparent 1px);
+    background-size:44px 44px,44px 44px;
+    mask-image:linear-gradient(180deg, rgba(0,0,0,0.55), transparent 78%);
 }}
 
 /* Sidebar */
@@ -122,7 +127,7 @@ html, body, [data-testid="stAppViewContainer"] {{ background:{BG_DEEP} !importan
 }}
 [data-testid="stSidebarCollapsedControl"]:hover,
 [data-testid="collapsedControl"]:hover {{
-    border-color:{CYAN} !important; box-shadow:none;
+    border-color:{AMBER} !important; box-shadow:none;
 }}
 [data-testid="stSidebarCollapsedControl"] svg,
 [data-testid="collapsedControl"] svg,
@@ -196,8 +201,8 @@ div[data-testid="column"] > div[data-testid="stVerticalBlock"] {{
 [data-testid="stMetric"] {{
     background:linear-gradient(145deg,rgba(17,24,39,0.96),rgba(23,32,51,0.88));
     border:1px solid {BORDER}; border-top:1px solid {BORDER_HI};
-    border-radius:10px; padding:0.55rem 0.9rem !important;
-    box-shadow:0 18px 45px rgba(0,0,0,0.25);
+    border-radius:3px; padding:0.55rem 0.9rem !important;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
 }}
 [data-testid="stMetricValue"] {{
     font-size:1.05rem !important; font-weight:700 !important;
@@ -219,7 +224,7 @@ div[data-testid="stVerticalBlock"] {{ gap:0.35rem !important; }}
 /* Buttons */
 .stButton > button {{
     background:#080c11 !important; color:{TEXT_HI} !important;
-    border:1px solid {BORDER_HI} !important; border-radius:6px !important;
+    border:1px solid {BORDER_HI} !important; border-radius:3px !important;
     font-family:var(--font-mono) !important;
     font-weight:800 !important; font-size:0.74rem !important;
     letter-spacing:.08em; text-transform:uppercase;
@@ -227,7 +232,7 @@ div[data-testid="stVerticalBlock"] {{ gap:0.35rem !important; }}
     white-space:nowrap !important;
     padding-left:.55rem !important; padding-right:.55rem !important;
 }}
-.stButton > button:hover {{ border-color:{CYAN} !important;
+.stButton > button:hover {{ border-color:{AMBER} !important;
     color:{TEXT_HI} !important; box-shadow:none; }}
 button[kind="primary"] {{
     background:linear-gradient(135deg,#008f5a,#005f3f) !important;
@@ -261,11 +266,10 @@ button[kind="primary"] {{
 .bt-panel {{
     background:linear-gradient(180deg,rgba(11,15,20,0.98),rgba(6,9,12,0.96));
     border:1px solid {BORDER}; border-top:1px solid {BORDER_HI};
-    border-radius:12px;
+    border-radius:3px;
     padding:0.8rem 1rem; margin-bottom:0.6rem;
     font-family:var(--font-ui);
-    box-shadow:0 22px 60px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.03);
-    backdrop-filter:blur(10px);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
 }}
 .bt-section-title {{
     color:{TEXT_HI}; font-family:var(--font-mono);
@@ -276,9 +280,8 @@ button[kind="primary"] {{
     display:flex; align-items:center; justify-content:space-between;
     gap:1rem; margin:0 0 .75rem 0; padding:.85rem 1rem;
     border:1px solid {BORDER}; border-top:1px solid {BORDER_HI};
-    border-radius:14px;
+    border-radius:3px;
     background:linear-gradient(135deg,rgba(9,13,18,0.98),rgba(2,4,7,0.96));
-    box-shadow:0 20px 70px rgba(0,0,0,0.32);
 }}
 .bt-brand-title {{
     color:{TEXT_HI}; font-family:var(--font-ui);
@@ -291,15 +294,15 @@ button[kind="primary"] {{
     margin-top:.35rem;
 }}
 .bt-brand-mark {{
-    width:38px; height:38px; border-radius:10px;
-    background:linear-gradient(145deg,rgba(90,167,216,.24),rgba(47,191,113,.15));
-    border:1px solid rgba(90,167,216,.35);
+    width:38px; height:38px; border-radius:3px;
+    background:linear-gradient(145deg,rgba(255,171,46,.22),rgba(47,191,113,.14));
+    border:1px solid rgba(255,171,46,.4);
     display:flex; align-items:center; justify-content:center;
     font-family:var(--font-mono);
     color:{TEXT_HI}; font-weight:900; letter-spacing:.02em;
 }}
 .bt-command {{
-    border:1px solid {BORDER}; border-radius:12px;
+    border:1px solid {BORDER}; border-radius:3px;
     background:linear-gradient(180deg,rgba(8,12,17,.98),rgba(3,5,8,.96));
     padding:.75rem .85rem .55rem .85rem; margin-bottom:.65rem;
 }}
@@ -311,8 +314,8 @@ button[kind="primary"] {{
     display:flex; align-items:center; flex-wrap:wrap;
     background:linear-gradient(180deg,rgba(8,12,17,.98),rgba(2,4,7,.96));
     border:1px solid {BORDER}; border-top:1px solid {BORDER_HI};
-    border-radius:12px; padding:.35rem .35rem; overflow-x:auto;
-    margin-bottom:1rem; box-shadow:0 18px 55px rgba(0,0,0,.26);
+    border-radius:3px; padding:.35rem .35rem; overflow-x:auto;
+    margin-bottom:1rem;
 }}
 .kpi-item {{
     display:flex; align-items:baseline; gap:.45rem;
@@ -398,7 +401,7 @@ button[data-baseweb="tab"] {{
 }}
 button[data-baseweb="tab"][aria-selected="true"] {{
     color:{TEXT_HI} !important;
-    border-bottom:2px solid {CYAN} !important;
+    border-bottom:2px solid {AMBER} !important;
 }}
 div[data-baseweb="tab-list"] {{
     border-bottom:1px solid {BORDER} !important;
@@ -434,8 +437,8 @@ label[data-baseweb="checkbox"] * {{
 div[data-testid="stTextInput"] input:focus,
 div[data-testid="stNumberInput"] input:focus,
 div[data-testid="stTextArea"] textarea:focus {{
-    border-color:{CYAN} !important;
-    box-shadow:0 0 0 1px rgba(0,183,255,.35) !important;
+    border-color:{AMBER} !important;
+    box-shadow:0 0 0 1px rgba(255,171,46,.35) !important;
 }}
 div[data-testid="stTextArea"] textarea {{
     background:{BG_PANEL} !important; color:{TEXT} !important;
@@ -455,17 +458,17 @@ button[kind="primary"]:hover {{
 /* Tabs: soft hover before selection */
 button[data-baseweb="tab"]:hover {{
     color:{TEXT} !important;
-    background:rgba(0,183,255,0.04) !important;
+    background:rgba(255,171,46,0.05) !important;
 }}
 
 /* Dataframe row hover */
 .stDataFrame tbody tr:hover td {{
-    background:rgba(0,183,255,0.05) !important;
+    background:rgba(255,171,46,0.05) !important;
 }}
 
 /* KPI items glow their value on hover */
 .kpi-item {{ transition:background .15s ease; border-radius:6px; }}
-.kpi-item:hover {{ background:rgba(0,183,255,0.045); }}
+.kpi-item:hover {{ background:rgba(255,171,46,0.05); }}
 
 /* Headings tracking */
 h1,h2,h3,h4,h5 {{ font-family:var(--font-ui) !important;
@@ -475,7 +478,7 @@ h1,h2,h3,h4,h5 {{ font-family:var(--font-ui) !important;
 details[data-testid="stExpander"],
 div[data-testid="stExpander"] {{
     background:{BG_PANEL} !important;
-    border:1px solid {BORDER} !important; border-radius:10px !important;
+    border:1px solid {BORDER} !important; border-radius:3px !important;
 }}
 
 ::-webkit-scrollbar {{ width:6px; height:6px; }}
@@ -494,20 +497,27 @@ def secure_page() -> None:
     is no central router to gate — the guarantee is simply that every page
     calls this before it touches data.
 
-    It was called `secure_page`, which described the cosmetic half and hid the
+    It was called `apply_theme`, which described the cosmetic half and hid the
     half that matters. The risk with that name was specific: a future page that
     wanted data but not styling would have had no reason to call it, and would
     have served an unauthenticated visitor while looking perfectly correct. The
     name now says what skipping it costs.
 
+    Theme CSS is applied *before* the gate, not after. `require_login()` halts
+    the script with `st.stop()` when nobody is signed in, and the earlier
+    order meant the sign-in screen itself never received the main theme —
+    it rendered against bare Streamlit white with only its own small
+    stylesheet layered on top, which is why it read as empty rather than as
+    part of the same product. Injecting a `<style>` tag carries no data, so
+    moving it ahead of the gate costs nothing security-wise while fixing that.
+
     Halts with a sign-in screen in `oidc` mode, falls back to the shared
     password form in `password` mode, and is a no-op locally.
     See dashboard/_identity.py.
     """
-    from dashboard._identity import render_account_chip, require_login
-    # Gate first: a halted page should never have rendered anything.
-    require_login()
     st.markdown(_THEME_CSS, unsafe_allow_html=True)
+    from dashboard._identity import render_account_chip, require_login
+    require_login()
     render_account_chip()
 
 

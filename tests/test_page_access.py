@@ -13,6 +13,7 @@ half and hid the half that matters.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -77,12 +78,20 @@ def test_the_old_cosmetic_name_is_gone():
 
     An alias would let code call the theming half without the gate and still
     look correct. Removing it means a missed call site fails loudly instead.
+
+    Checks for a *functional* reference — a call or an assignment — not a
+    bare substring. secure_page()'s own docstring explains the rename by
+    naming the old name in prose ("It was called `apply_theme`, which..."),
+    which is the whole point of documenting a rename and must stay legible;
+    a blind substring search flagged that explanation as if it were a live
+    reference back to the deleted name.
     """
+    pattern = re.compile(r"\bapply_theme\s*[(=]")
     offenders = [
         p.relative_to(_ROOT)
         for p in _ROOT.rglob("*.py")
         if "__pycache__" not in str(p) and ".git" not in str(p)
         and p.name != Path(__file__).name
-        and "apply_theme" in p.read_text(encoding="utf-8")
+        and pattern.search(p.read_text(encoding="utf-8"))
     ]
     assert not offenders, f"apply_theme still referenced in: {offenders}"
