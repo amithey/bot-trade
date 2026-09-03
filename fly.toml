@@ -44,9 +44,19 @@ primary_region = "iad"  # us-east (Ashburn, VA) — change to whatever is closes
   # background daemon thread (trading/live_engine.py) that keeps placing
   # decisions whether or not anyone has the dashboard open. Auto-stop would
   # silently pause every user's bot the moment they close the tab.
-  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+
+  # A note on pausing billing, since it was tried and is worth recording:
+  # setting auto_start_machines=false and min_machines_running=0, then
+  # `fly machine stop <id>`, did NOT reliably keep the machine down on this
+  # app — Fly Proxy restarted it again within ~2 seconds, both settings
+  # notwithstanding. That contradicts the documented semantics and isn't
+  # something this config can fix; it matches other operators' reports of
+  # the same platform behavior. The only reliable stop found was
+  # `fly machine destroy <id> --force` (the volume is untouched — it's a
+  # separate object — so no data is lost), with `fly deploy` to bring a
+  # fresh machine back up against the same volume when resuming.
 
   [[http_service.checks]]
     interval = "30s"
