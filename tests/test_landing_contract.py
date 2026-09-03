@@ -21,7 +21,10 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
 _INDEX = _ROOT / "landing" / "index.html"
-_APP = _ROOT / "dashboard" / "app.py"
+# dashboard/app.py is the st.navigation() router now — the plan-redirect
+# logic this file's tests check for actually lives on the default page,
+# dashboard/pages/0_Live.py, which is what app.py hands off to on load.
+_APP = _ROOT / "dashboard" / "pages" / "0_Live.py"
 _SETTINGS = _ROOT / "dashboard" / "pages" / "2_Settings.py"
 
 _SESSION_KEY = "_bt_pending_plan"
