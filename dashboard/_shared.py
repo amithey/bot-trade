@@ -113,6 +113,18 @@ html, body, [data-testid="stAppViewContainer"] {{ background:{BG_DEEP} !importan
     letter-spacing:.04em;
 }}
 [data-testid="stSidebarNav"] a:hover {{ color:{TEXT_HI} !important; }}
+/* Section headers ("Trade", "Research", "Lab", "Account") from
+   st.navigation()'s grouped sidebar — match the uppercase/tracked-out
+   label language used everywhere else (.kpi-label, .page-sub, badges)
+   instead of leaving Streamlit's default paragraph styling in place. */
+header[data-testid="stNavSectionHeader"] {{
+    padding:1rem 0 .3rem 0 !important;
+}}
+header[data-testid="stNavSectionHeader"] p {{
+    color:{TEXT_DIM} !important; font-family:var(--font-mono) !important;
+    font-size:.62rem !important; font-weight:700 !important;
+    letter-spacing:.16em !important; text-transform:uppercase !important;
+}}
 /* Collapsed-sidebar re-open chevron — pin it to top-left, above everything. */
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"] {{
