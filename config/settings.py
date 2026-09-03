@@ -119,42 +119,69 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------ #
-    # Billing (Stripe) — see saas/billing.py
+    # Billing (Paddle) — see saas/billing.py
     # ------------------------------------------------------------------ #
+    # Switched from Stripe: Stripe does not support Israel-based sellers
+    # directly (confirmed against the real onboarding flow, not just docs —
+    # the "Business location" dropdown simply has no Israel option). Paddle
+    # is a merchant of record — it is the seller of record for every
+    # transaction, handles global tax/VAT, and does accept Israel as a
+    # seller's business location. That also changes the integration shape:
+    # there is no Stripe-style hosted Checkout URL to redirect to. Paddle
+    # checkout runs client-side (Paddle.js), so `paddle_client_token` below
+    # is a *public* value meant to ship to the browser — unlike the secret
+    # API key, it is not a secret, but it lives here rather than hardcoded
+    # so a sandbox and a production deployment can carry different values.
+    #
     # Unset by default: billing is disabled and every account stays on the
-    # Free plan until this is configured. Never logged, never displayed.
-    stripe_secret_key: Optional[str] = Field(
+    # Free plan until this is configured.
+    paddle_api_key: Optional[str] = Field(
         default=None,
-        description="Stripe secret key (sk_test_... or sk_live_...). "
-                    "Unset disables billing entirely.",
+        description="Paddle API key (server-side, secret). Unset disables "
+                    "billing entirely.",
     )
-    stripe_price_id_pro: Optional[str] = Field(
-        default=None,
-        description="Stripe recurring Price ID for the Pro plan ($29/mo).",
+    paddle_environment: str = Field(
+        default="sandbox",
+        description="'sandbox' or 'production' — selects which Paddle API "
+                    "base URL the SDK talks to. Sandbox and production are "
+                    "entirely separate Paddle accounts with separate keys, "
+                    "products and prices.",
     )
-    stripe_price_id_desk: Optional[str] = Field(
+    paddle_client_token: Optional[str] = Field(
         default=None,
-        description="Stripe recurring Price ID for the Desk plan ($99/mo).",
+        description="Paddle client-side token — public by design, shipped "
+                    "to the browser to open the Paddle.js checkout overlay. "
+                    "Not a secret, but environment-specific (sandbox vs "
+                    "production have different tokens).",
     )
-    stripe_webhook_secret: Optional[str] = Field(
+    paddle_price_id_pro: Optional[str] = Field(
         default=None,
-        description="Signing secret for a Stripe webhook endpoint, if one is "
-                    "set up. Not required — v1 reconciles subscription state "
-                    "by polling on a TTL instead of receiving webhooks; see "
-                    "saas/billing.py.",
+        description="Paddle recurring Price ID for the Pro plan ($29/mo).",
+    )
+    paddle_price_id_desk: Optional[str] = Field(
+        default=None,
+        description="Paddle recurring Price ID for the Desk plan ($99/mo).",
+    )
+    paddle_webhook_secret: Optional[str] = Field(
+        default=None,
+        description="Notification (webhook) signing secret from the Paddle "
+                    "dashboard. Not required for v1 — subscription state is "
+                    "reconciled by polling on a TTL, the same pattern used "
+                    "for Stripe before and for fundamentals/news in "
+                    "market_data/; see saas/billing.py.",
     )
     bottrade_base_url: str = Field(
         default="http://localhost:8501",
         description="Public URL this dashboard is reachable at. Used to build "
-                    "the Checkout success/cancel redirect URLs — must be the "
-                    "real deployed origin in production, not localhost.",
+                    "the checkout success-return URL — must be the real "
+                    "deployed origin in production, not localhost.",
     )
 
     @property
     def billing_configured(self) -> bool:
-        """True once there's enough to create at least one paid Checkout."""
-        return bool(self.stripe_secret_key and
-                    (self.stripe_price_id_pro or self.stripe_price_id_desk))
+        """True once there's enough to open at least one paid checkout."""
+        return bool(self.paddle_api_key and
+                    (self.paddle_price_id_pro or self.paddle_price_id_desk))
 
     @property
     def is_production(self) -> bool:

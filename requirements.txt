@@ -61,7 +61,7 @@ requests==2.33.0
 # --- Billing --------------------------------------------------------------
 # Required only when STRIPE_SECRET_KEY is configured; without it billing is
 # disabled and every account stays on the Free plan. See saas/billing.py.
-stripe==15.6.0
+paddle-python-sdk==1.15.0
 
 # --- Authentication -----------------------------------------------------------
 # Required only when [auth] is configured in .streamlit/secrets.toml; without

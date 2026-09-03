@@ -179,73 +179,92 @@ below the level where p95 starts climbing.
 
 ---
 
-## 2c. Billing (Stripe)
+## 2c. Billing (Paddle)
 
 Without this, every account stays on the Free plan forever — nothing is
 broken, there's just no way to actually get paid. `saas/billing.py` is the
-integration; this section is what to do in the Stripe Dashboard to make it
+integration; this section is what to do in the Paddle Dashboard to make it
 work.
 
-**1. Account setup.** During onboarding, Stripe asks who should handle
-global sales tax/fraud/support. Choose **"Pick what you need"**, not
-"Let us handle it" — the latter adds a 3.5% surcharge on every transaction
-on top of Stripe's normal fee, aimed at businesses with real international
-tax complexity. For a new subscription product, check **Collect tax**
-(Stripe Tax — calculates tax by customer location; you register and remit
-only once you cross a threshold in a given jurisdiction) and skip **Send
-invoices** (that's for one-off manual invoices to a specific customer, not
-the self-serve subscription flow here).
+**Why Paddle, not Stripe:** Stripe does not support Israel as a seller's
+business location — confirmed against the real onboarding flow, not just
+read about it. Paddle is a merchant of record (Paddle is legally the seller
+for every transaction and handles global VAT/tax compliance, so BotTrade
+carries zero sales-tax liability), and it does accept Israel as a business
+location. That also changes the integration shape: there's no Stripe-style
+hosted Checkout URL to redirect to — Paddle Checkout runs client-side via
+Paddle.js, embedded in the Settings page.
 
-Stripe's onboarding also asks for a business website. If you don't have one,
-a plain static page describing the product satisfies it — see `landing/` in
-this repo, a zero-cost landing page deployable to a free Vercel subdomain.
-BotTrade itself can't be that page: it's a Streamlit app with a persistent
-background thread and a websocket connection, which serverless hosts like
-Vercel don't support.
+**1. Account setup.** Sign up as a vendor at [paddle.com](https://www.paddle.com/).
+Paddle's own onboarding walks through business verification; a plain static
+page describing the product satisfies the "business website" requirement if
+you don't have one — see `landing/` in this repo, a zero-cost landing page
+deployable to a free Vercel subdomain. BotTrade itself can't be that page:
+it's a Streamlit app with a persistent background thread and a websocket
+connection, which serverless hosts like Vercel don't support.
 
-**2. Create two recurring Prices** in the Stripe Dashboard (Product catalog
-→ Add product) — one for Pro ($29/mo), one for Desk ($99/mo). The Free plan
-needs no Stripe price; it's the default for every new account. Copy each
-Price ID (`price_...`, not the Product ID).
+**2. Create two recurring Prices** in the Paddle Dashboard (Catalog →
+Products → New product) — a "BotTrade Pro" product priced at $29/mo, and a
+**separate** "BotTrade Desk" product priced at $99/mo. Don't add a second
+price to the same product — Paddle prices belong to one product each, and
+mixing them up misattributes the subscription's plan on reconciliation. The
+Free plan needs no Paddle price; it's the default for every new account.
+Copy each Price ID (`pri_...`, not the Product ID).
 
-**3. Set the environment variables** (see `.env.example`):
+**3. Create a scoped API key** (Developer tools → Authentication → API keys
+→ Create API key) with only what `saas/billing.py` actually calls: Customers
+(Read + Write), Customer portal sessions (Write), Customer authentication
+tokens (Write), Prices (Read), Products (Read), Subscriptions (Read),
+Transactions (Read). Also grab the **client-side token** (Developer tools →
+Authentication → Client-side tokens) — unlike the API key, this one is
+public by design; it's what ships to the browser to open the Checkout
+overlay.
+
+**4. Set the environment variables** (see `.env.example`):
 
 ```bash
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_PRICE_ID_PRO=price_...
-STRIPE_PRICE_ID_DESK=price_...
+PADDLE_API_KEY=pdl_sdbx_apikey_...       # secret — server-side only
+PADDLE_ENVIRONMENT=sandbox               # 'sandbox' or 'production'
+PADDLE_CLIENT_TOKEN=test_...             # public — ships to the browser
+PADDLE_PRICE_ID_PRO=pri_...
+PADDLE_PRICE_ID_DESK=pri_...
 BOTTRADE_BASE_URL=https://yourdomain.example   # or http://localhost:8501 for local testing
 ```
 
-**Test in test mode first.** Use the `sk_test_...` key and test-mode Price
-IDs, and pay with Stripe's test card `4242 4242 4242 4242` (any future
-expiry, any CVC). Confirm the whole loop — Settings → Upgrade → Stripe
-Checkout → redirected back with the new plan active — before switching to
-`sk_live_...` and live Price IDs.
+**Test in sandbox first.** Sandbox and production are entirely separate
+Paddle accounts — separate keys, separate product catalog, separate
+dashboard. With `PADDLE_ENVIRONMENT=sandbox` and sandbox keys/Price IDs,
+confirm the whole loop — Settings → Upgrade → Paddle's Checkout overlay
+(Paddle's sandbox accepts test card `4242 4242 4242 4242`, any future
+expiry, any CVC) → redirected back with the new plan active — before
+switching to `PADDLE_ENVIRONMENT=production` and live keys/Price IDs
+(promoting a Paddle account from sandbox to production/live is a separate
+step in Paddle's own dashboard: "Switch your account to live").
 
 **How it works once configured:**
 
-* **Checkout** — clicking "Upgrade" in Settings creates a Stripe Checkout
-  Session and sends the user to Stripe's own hosted payment page. BotTrade
-  never sees a card number.
-* **Confirmation** — Stripe redirects back to `/Settings?session_id=...`;
-  the page verifies the session with Stripe directly (a session ID in a URL
-  is not proof of payment on its own) before applying the plan.
+* **Checkout** — clicking "Upgrade" in Settings opens Paddle's Checkout
+  overlay client-side via Paddle.js. BotTrade never sees a card number.
+* **Confirmation** — Paddle's overlay returns to `/Settings?paddle_return=1`
+  with no transaction id to look up (unlike Stripe's `?session_id=`); the
+  return instead triggers an immediate forced reconciliation against
+  Paddle, using the customer id that was already known before checkout
+  opened.
 * **Cancellation / payment method / invoices** — a "Manage subscription"
-  button opens Stripe's hosted Billing Portal. No custom UI to maintain.
+  button opens Paddle's hosted Customer Portal. No custom UI to maintain.
 * **No webhook receiver.** The textbook way to learn about a cancellation
   the instant it happens is a webhook, but Streamlit has no clean way to
   expose an HTTP route for one, and standing up a second service just for
   this is a bigger lift than a subscription business needs at this stage.
-  Instead, `sync_subscription_status` re-checks Stripe on a 5-minute TTL
+  Instead, `sync_subscription_status` re-checks Paddle on a 5-minute TTL
   whenever Settings loads. **Known limitation:** a cancellation made
-  directly in Stripe (not through the app) can take up to 5 minutes, or
+  directly in Paddle (not through the app) can take up to 5 minutes, or
   until the user next opens Settings, to downgrade their access here.
 
-**4. Production checklist addition:** confirm `BOTTRADE_BASE_URL` is the
-real HTTPS origin before going live — Stripe's redirect back to a wrong or
-unreachable URL leaves a paying customer stranded on Stripe's own success
-page having no idea whether it worked.
+**5. Production checklist addition:** confirm `BOTTRADE_BASE_URL` is the
+real HTTPS origin before going live — Paddle's Checkout overlay redirecting
+to a wrong or unreachable URL leaves a paying customer stranded with no idea
+whether it worked.
 
 ---
 
@@ -354,9 +373,11 @@ plain default in `fly.toml`'s `[env]` block. Names must match
 ```bash
 fly secrets set \
   ANTHROPIC_API_KEY=sk-ant-... \
-  STRIPE_SECRET_KEY=sk_live_... \
-  STRIPE_PRICE_ID_PRO=price_... \
-  STRIPE_PRICE_ID_DESK=price_... \
+  PADDLE_API_KEY=pdl_apikey_... \
+  PADDLE_ENVIRONMENT=production \
+  PADDLE_CLIENT_TOKEN=live_... \
+  PADDLE_PRICE_ID_PRO=pri_... \
+  PADDLE_PRICE_ID_DESK=pri_... \
   BOTTRADE_BASE_URL=https://<your-app>.fly.dev
 ```
 
@@ -390,8 +411,8 @@ fly deploy
 
 Fly auto-provisions HTTPS at `https://<your-app>.fly.dev`. **Update**
 `BOTTRADE_BASE_URL` (step 4) and `landing/index.html`'s `APP_URL` **to
-match this exact URL** once you know it — Stripe's redirect and the landing
-page's pricing buttons both depend on it being right.
+match this exact URL** once you know it — Paddle's Checkout return and the
+landing page's pricing buttons both depend on it being right.
 
 **Cost note:** the `[[vm]]` block in `fly.toml` requests 2 GB RAM (ChromaDB
 + sentence-transformers need it warm), and `min_machines_running = 1` keeps
@@ -484,11 +505,11 @@ Before pointing real eyeballs at the URL:
 - [ ] Backup covers `data/profiles/`, `data/portfolios/` and
       `data/usage.db` — these are your users' accounts and billing
 - [ ] `BOTTRADE_MAX_LIVE_ENGINES` matched to the host's capacity
-- [ ] If accepting payments: `STRIPE_SECRET_KEY` and price IDs are the
-      **live** (`sk_live_...`) ones, not test mode — verified with a real
-      card, not `4242 4242 4242 4242`
+- [ ] If accepting payments: `PADDLE_API_KEY`, `PADDLE_CLIENT_TOKEN` and the
+      price IDs are the **live** ones with `PADDLE_ENVIRONMENT=production`,
+      not sandbox — verified with a real card, not `4242 4242 4242 4242`
 - [ ] `BOTTRADE_BASE_URL` is the real HTTPS origin — a wrong redirect
-      stranded a paying customer on Stripe's success page
+      strands a paying customer with no idea whether checkout worked
 - [ ] `docker build` succeeded from a clean checkout — the image installs
       exactly `requirements.txt`, so anything not pinned there is not
       in production

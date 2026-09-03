@@ -1,11 +1,12 @@
 """
 The landing page and the app have to agree, and nothing else checks it.
 
-The pricing buttons deliberately do NOT go straight to Stripe. A Checkout
-Session only grants a plan if it carries `bottrade_account_id`, and that is
-only knowable once someone has signed in — so a Payment Link opened from a
-static page would take the money and then fail confirmation, leaving a
-customer charged and entitled to nothing.
+The pricing buttons deliberately do NOT go straight to a payment processor.
+A Paddle customer is only created for an account that carries
+`bottrade_account_id`, and that is only knowable once someone has signed
+in — so a payment link opened from a static page would have no account to
+attach the subscription to, leaving a customer charged and entitled to
+nothing.
 
 Instead the buttons carry ?plan=<ID> into the app, which hands it to
 Settings. That is a contract spread across three files with no type system
@@ -38,13 +39,15 @@ def html() -> str:
 # --------------------------------------------------------------------------- #
 # The landing page must not sell directly
 # --------------------------------------------------------------------------- #
-def test_no_stripe_payment_links_on_the_landing_page(html):
-    """A payment started here cannot carry an account id, so confirmation
-    would refuse it — after the card was charged."""
-    for marker in ("buy.stripe.com", "checkout.stripe.com", "price_"):
+def test_no_direct_payment_links_on_the_landing_page(html):
+    """A payment started here cannot carry an account id, so there'd be
+    nothing to attach the resulting subscription to."""
+    markers = ("buy.stripe.com", "checkout.stripe.com", "price_",
+              "buy.paddle.com", "checkout.paddle.com", "pri_")
+    for marker in markers:
         assert marker not in html, (
             f"{marker!r} found on the landing page: a payment begun before "
-            f"sign-in has no bottrade_account_id and will fail confirmation"
+            f"sign-in has no bottrade_account_id to attach"
         )
 
 

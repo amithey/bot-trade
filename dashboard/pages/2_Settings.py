@@ -1,8 +1,10 @@
 """Settings page — user profile, watchlist management, API key status."""
 from __future__ import annotations
 
+import json
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ── sys.path bootstrap (so `from dashboard...` works in direct `streamlit run`)
 import sys as _sys
@@ -12,7 +14,7 @@ if str(_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ROOT))
 # ────────────────────────────────────────────────────────────────────────────
 
-from dashboard._identity import account_id, auth_mode, identifies_individuals
+from dashboard._identity import account_id, auth_mode, current_user, identifies_individuals
 from dashboard._shared import (
     DEFAULT_TICKERS, RISK_CHOICES,
     secure_page, current_engine, ensure_profile_in_session, get_tenant,
@@ -38,23 +40,27 @@ tenant = get_tenant()
 _ledger = get_ledger()
 _billing_account = tenant.billing_account_id
 
-# Returning from Stripe Checkout: the URL carries ?session_id=cs_...
-# Verify the payment with Stripe itself before granting anything — a
-# session_id in a query string is not proof of payment on its own.
-_returning_session = st.query_params.get("session_id")
-if _returning_session:
-    _confirmed_plan = billing.confirm_checkout_session(_ledger, _returning_session)
+# Returning from a Paddle Checkout overlay: the success URL carries
+# ?paddle_return=1. Unlike Stripe's redirect, Paddle hands back no
+# transaction id to look up — the customer id was already known before
+# checkout opened (it's what the overlay was given to begin with), so a
+# forced reconciliation finds the new subscription directly. See the
+# "no confirm_checkout_session" note in saas/billing.py's module docstring.
+_returning_from_checkout = st.query_params.get("paddle_return")
+if _returning_from_checkout:
     st.query_params.clear()
-    if _confirmed_plan:
-        st.success(f"Payment confirmed — you're now on the {_confirmed_plan.title()} plan.")
+    _resolved_plan = billing.sync_subscription_status(
+        _ledger, _billing_account, force=True)
+    if _resolved_plan != "FREE":
+        st.success(f"Payment confirmed — you're now on the "
+                   f"{_resolved_plan.title()} plan.")
     else:
-        st.warning("We couldn't confirm that checkout yet. If you completed "
-                   "payment, this updates within a few minutes — or contact "
-                   "support if it doesn't.")
+        st.info("If you completed payment, it can take a moment to show up "
+                "here — use the refresh button below, or reload the page.")
 else:
-    # Cheap on every load: sync_subscription_status only re-checks Stripe
+    # Cheap on every load: sync_subscription_status only re-checks Paddle
     # once per BOTTRADE_SYNC_TTL; this is what notices a cancellation or a
-    # failed renewal that happened entirely on Stripe's side.
+    # failed renewal that happened entirely on Paddle's side.
     billing.sync_subscription_status(_ledger, _billing_account)
 
 ent = tenant.entitlement
@@ -155,8 +161,8 @@ if billing.billing_enabled():
     st.markdown("##### Upgrade or manage your subscription")
 
     _base = _settings.bottrade_base_url.rstrip("/")
-    _success_url = f"{_base}/Settings?session_id={{CHECKOUT_SESSION_ID}}"
-    _cancel_url = f"{_base}/Settings"
+    _success_url = f"{_base}/Settings?paddle_return=1"
+    _user_email = (current_user().get("email") or "").strip()
 
     # Someone who clicked a specific plan on the landing page arrived here via
     # app.py, which parked their choice in session state. Say so, rather than
@@ -169,8 +175,14 @@ if billing.billing_enabled():
             st.info(f"Continue to **{PLANS[_pending].name}** below.", icon="🛒")
 
     _purchasable = [p for p in billing.purchasable_plans() if p != ent.plan.id]
-    _has_customer = bool(_ledger.get_stripe_customer_id(_billing_account))
+    _has_customer = bool(_ledger.get_paddle_customer_id(_billing_account))
     _slots = len(_purchasable) + (1 if _has_customer else 0)
+
+    if not _user_email and _purchasable:
+        st.caption(
+            "We don't have an email on file for you yet, so checkout can't "
+            "open — sign in with an account that has one, or contact support."
+        )
 
     if _slots:
         cols = st.columns(_slots)
@@ -180,17 +192,51 @@ if billing.billing_enabled():
             with col:
                 st.markdown(f"**{plan.name}** — ${plan.price_usd_month:.0f}/mo")
                 st.caption(plan.tagline)
-                # Created on every render rather than cached: Checkout
-                # Sessions are meant to be short-lived and single-use, and
-                # this is a low-traffic settings page — simplicity here
-                # beats saving a Stripe API call that costs nothing.
-                checkout_url = billing.create_checkout_session(
+                # Built fresh on every render, same reasoning as the old
+                # Stripe Checkout Session: this is a low-traffic settings
+                # page, and simplicity here beats caching a cheap call.
+                cfg = billing.checkout_config(
                     _ledger, _billing_account, plan_id,
-                    success_url=_success_url, cancel_url=_cancel_url,
+                    success_url=_success_url, email=_user_email or None,
                 )
-                if checkout_url:
-                    st.link_button(f"Upgrade to {plan.name}", checkout_url,
-                                   use_container_width=True, type="primary")
+                if cfg:
+                    _btn_id = f"paddle-checkout-btn-{plan_id}"
+                    # json.dumps, not an f-string interpolation of the dict:
+                    # these become literal JS source, so they must be valid
+                    # JS/JSON syntax (double-quoted), not a Python repr.
+                    _items_js = json.dumps(
+                        [{"priceId": cfg["price_id"], "quantity": 1}])
+                    _customer_js = json.dumps({"id": cfg["customer_id"]})
+                    _custom_data_js = json.dumps(cfg["custom_data"])
+                    _success_url_js = json.dumps(cfg["success_url"])
+                    _token_js = json.dumps(cfg["client_token"])
+                    _env_js = json.dumps(cfg["environment"])
+                    components.html(f"""
+                        <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+                        <style>
+                          body {{ margin:0; font-family:inherit; }}
+                          button#{_btn_id} {{
+                            width:100%; padding:0.5rem 1rem; border-radius:8px;
+                            border:1px solid transparent; background:#ff4b4b;
+                            color:#fff; font-weight:600; font-size:1rem;
+                            cursor:pointer;
+                          }}
+                          button#{_btn_id}:hover {{ background:#e63e3e; }}
+                        </style>
+                        <button id="{_btn_id}">Upgrade to {plan.name}</button>
+                        <script>
+                          Paddle.Environment.set({_env_js});
+                          Paddle.Initialize({{ token: {_token_js} }});
+                          document.getElementById("{_btn_id}").addEventListener("click", function () {{
+                            Paddle.Checkout.open({{
+                              items: {_items_js},
+                              customer: {_customer_js},
+                              customData: {_custom_data_js},
+                              settings: {{ successUrl: {_success_url_js} }}
+                            }});
+                          }});
+                        </script>
+                    """, height=56)
                 else:
                     st.button(f"Upgrade to {plan.name}", disabled=True,
                              use_container_width=True,
@@ -200,13 +246,16 @@ if billing.billing_enabled():
             with cols[-1]:
                 st.markdown("**Manage subscription**")
                 st.caption("Cancel, update your payment method, or view invoices.")
-                portal_url = billing.create_portal_session(
-                    _ledger, _billing_account, return_url=f"{_base}/Settings")
+                portal_url = billing.create_portal_session(_ledger, _billing_account)
                 if portal_url:
                     st.link_button("Open billing portal", portal_url,
                                   use_container_width=True)
     else:
         st.caption("You're on the highest available plan.")
+
+    if _has_customer and st.button("Refresh subscription status"):
+        billing.sync_subscription_status(_ledger, _billing_account, force=True)
+        st.rerun()
 
 # ── Host notes — only relevant to whoever is running this instance ──────────
 _platform_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()

@@ -1,18 +1,23 @@
 """
-Tests for saas/billing.py — Stripe Checkout, the Billing Portal, and the
+Tests for saas/billing.py — Paddle Checkout, the Customer Portal, and the
 TTL-based subscription reconciliation that stands in for a webhook receiver.
 
-No test talks to Stripe's network. Every ``stripe.*`` call is monkeypatched
-with a fake that returns the shape billing.py actually reads. The properties
-worth pinning down: billing degrades to a clean no-op with no key configured
-(never crashes a page render), an unpaid checkout session never upgrades an
-account, a cancellation on Stripe's side is actually noticed on the next
-sync, and a Stripe API error anywhere never raises into the caller.
+No test talks to Paddle's network. ``billing._client()`` is monkeypatched
+with a fake exposing exactly the surface billing.py actually calls
+(``customers.create``, ``customer_portal_sessions.create``,
+``subscriptions.list``), returning objects shaped like the real Paddle SDK
+entities (``customer.id``, ``session.urls.general.overview``,
+``sub.items[i].price.id``) rather than plain dicts — this is what caught the
+Stripe-era ``StripeObject.get()`` regression, and the same discipline
+carries over here. The properties worth pinning down: billing degrades to a
+clean no-op with nothing configured (never crashes a page render), checkout
+config is never handed out without an email, a cancellation on Paddle's side
+is actually noticed on the next sync, and a Paddle API error anywhere never
+raises into the caller.
 """
 from __future__ import annotations
 
-import time
-import types
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -22,9 +27,10 @@ from saas.ledger import UsageLedger
 
 
 GOOD_KEY_ENV = {
-    "STRIPE_SECRET_KEY": "sk_test_fake",
-    "STRIPE_PRICE_ID_PRO": "price_pro_123",
-    "STRIPE_PRICE_ID_DESK": "price_desk_456",
+    "PADDLE_API_KEY": "pdl_sdbx_apikey_fake",
+    "PADDLE_CLIENT_TOKEN": "test_fake_client_token",
+    "PADDLE_PRICE_ID_PRO": "pri_pro_123",
+    "PADDLE_PRICE_ID_DESK": "pri_desk_456",
 }
 
 
@@ -33,17 +39,20 @@ def enabled(monkeypatch):
     """Billing configured with fake keys — settings is a live singleton."""
     for k, v in GOOD_KEY_ENV.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setattr(billing.settings, "stripe_secret_key", "sk_test_fake")
-    monkeypatch.setattr(billing.settings, "stripe_price_id_pro", "price_pro_123")
-    monkeypatch.setattr(billing.settings, "stripe_price_id_desk", "price_desk_456")
+    monkeypatch.setattr(billing.settings, "paddle_api_key", "pdl_sdbx_apikey_fake")
+    monkeypatch.setattr(billing.settings, "paddle_client_token", "test_fake_client_token")
+    monkeypatch.setattr(billing.settings, "paddle_price_id_pro", "pri_pro_123")
+    monkeypatch.setattr(billing.settings, "paddle_price_id_desk", "pri_desk_456")
+    monkeypatch.setattr(billing.settings, "paddle_environment", "sandbox")
     yield
 
 
 @pytest.fixture()
 def disabled(monkeypatch):
-    monkeypatch.setattr(billing.settings, "stripe_secret_key", None)
-    monkeypatch.setattr(billing.settings, "stripe_price_id_pro", None)
-    monkeypatch.setattr(billing.settings, "stripe_price_id_desk", None)
+    monkeypatch.setattr(billing.settings, "paddle_api_key", None)
+    monkeypatch.setattr(billing.settings, "paddle_client_token", None)
+    monkeypatch.setattr(billing.settings, "paddle_price_id_pro", None)
+    monkeypatch.setattr(billing.settings, "paddle_price_id_desk", None)
     yield
 
 
@@ -60,7 +69,86 @@ def clean_sync_cache():
 
 
 # --------------------------------------------------------------------------- #
-# Enablement / price mapping
+# Fakes — shaped like the real Paddle SDK entities, not plain dicts
+# --------------------------------------------------------------------------- #
+class _FakeCustomer:
+    def __init__(self, customer_id: str):
+        self.id = customer_id
+
+
+class _FakeCustomersClient:
+    def __init__(self, customer_id: str = "ctm_abc", explode: bool = False):
+        self.calls: list = []
+        self._customer_id = customer_id
+        self._explode = explode
+
+    def create(self, operation):
+        self.calls.append(operation)
+        if self._explode:
+            raise billing.ApiError.__new__(billing.ApiError)
+        return _FakeCustomer(self._customer_id)
+
+
+class _FakePortalUrls:
+    def __init__(self, overview: str):
+        self.general = SimpleNamespace(overview=overview)
+
+
+class _FakePortalSession:
+    def __init__(self, overview: str):
+        self.urls = _FakePortalUrls(overview)
+
+
+class _FakePortalClient:
+    def __init__(self, overview: str = "https://sandbox-customer-portal.paddle.com/x",
+                explode: bool = False):
+        self.calls: list = []
+        self._overview = overview
+        self._explode = explode
+
+    def create(self, customer_id, operation):
+        self.calls.append((customer_id, operation))
+        if self._explode:
+            raise billing.ApiError.__new__(billing.ApiError)
+        return _FakePortalSession(self._overview)
+
+
+def _fake_sub(sub_id: str, price_id: str):
+    """Stands in for a Paddle Subscription entity: billing.py reads
+    ``sub.id`` and, per item, ``item.price.id`` — real attribute access,
+    not dict indexing, so a SimpleNamespace tree is what actually exercises
+    the same code path the real SDK entity would."""
+    return SimpleNamespace(
+        id=sub_id, items=[SimpleNamespace(price=SimpleNamespace(id=price_id))],
+    )
+
+
+class _FakeSubscriptionsClient:
+    def __init__(self, subs: list | None = None, explode: bool = False):
+        self.calls: list = []
+        self._subs = subs if subs is not None else []
+        self._explode = explode
+
+    def list(self, operation):
+        self.calls.append(operation)
+        if self._explode:
+            raise billing.ApiError.__new__(billing.ApiError)
+        return list(self._subs)
+
+
+class _FakeClient:
+    def __init__(self, customers=None, customer_portal_sessions=None, subscriptions=None):
+        self.customers = customers or _FakeCustomersClient()
+        self.customer_portal_sessions = customer_portal_sessions or _FakePortalClient()
+        self.subscriptions = subscriptions or _FakeSubscriptionsClient()
+
+
+def _patch_client(monkeypatch, client: _FakeClient) -> None:
+    monkeypatch.setattr(billing, "_client", lambda: client)
+
+
+# --------------------------------------------------------------------------- #
+# Enablement / plan-price mapping
 # --------------------------------------------------------------------------- #
 def test_billing_disabled_with_no_key(disabled):
     assert billing.billing_enabled() is False
@@ -71,37 +159,36 @@ def test_billing_enabled_with_a_key_and_a_price(enabled):
 
 
 def test_billing_disabled_with_a_key_but_no_prices(monkeypatch):
-    monkeypatch.setattr(billing.settings, "stripe_secret_key", "sk_test_fake")
-    monkeypatch.setattr(billing.settings, "stripe_price_id_pro", None)
-    monkeypatch.setattr(billing.settings, "stripe_price_id_desk", None)
+    monkeypatch.setattr(billing.settings, "paddle_api_key", "pdl_sdbx_apikey_fake")
+    monkeypatch.setattr(billing.settings, "paddle_price_id_pro", None)
+    monkeypatch.setattr(billing.settings, "paddle_price_id_desk", None)
     assert billing.billing_enabled() is False
 
 
 def test_price_and_plan_mapping_round_trip(enabled):
-    assert billing.price_id_for_plan("PRO") == "price_pro_123"
-    assert billing.price_id_for_plan("pro") == "price_pro_123"   # case-insensitive
-    assert billing.plan_for_price_id("price_desk_456") == "DESK"
-    assert billing.plan_for_price_id("price_unknown") is None
+    assert billing.price_id_for_plan("PRO") == "pri_pro_123"
+    assert billing.price_id_for_plan("pro") == "pri_pro_123"   # case-insensitive
+    assert billing.plan_for_price_id("pri_desk_456") == "DESK"
+    assert billing.plan_for_price_id("pri_unknown") is None
 
 
 def test_purchasable_plans_reflects_configured_prices(monkeypatch):
-    monkeypatch.setattr(billing.settings, "stripe_secret_key", "sk_test_fake")
-    monkeypatch.setattr(billing.settings, "stripe_price_id_pro", "price_pro_123")
-    monkeypatch.setattr(billing.settings, "stripe_price_id_desk", None)
+    monkeypatch.setattr(billing.settings, "paddle_api_key", "pdl_sdbx_apikey_fake")
+    monkeypatch.setattr(billing.settings, "paddle_price_id_pro", "pri_pro_123")
+    monkeypatch.setattr(billing.settings, "paddle_price_id_desk", None)
     assert billing.purchasable_plans() == ["PRO"]
 
 
 # --------------------------------------------------------------------------- #
 # Disabled billing is a clean no-op everywhere
 # --------------------------------------------------------------------------- #
-def test_checkout_session_is_none_when_disabled(disabled, ledger):
-    url = billing.create_checkout_session(
-        ledger, "acct1", "PRO", "http://x/ok", "http://x/no")
-    assert url is None
+def test_checkout_config_is_none_when_disabled(disabled, ledger):
+    cfg = billing.checkout_config(ledger, "acct1", "PRO", "http://x/ok", email="a@b.com")
+    assert cfg is None
 
 
 def test_portal_session_is_none_when_disabled(disabled, ledger):
-    assert billing.create_portal_session(ledger, "acct1", "http://x") is None
+    assert billing.create_portal_session(ledger, "acct1") is None
 
 
 def test_sync_returns_the_current_ledger_plan_when_disabled(disabled, ledger):
@@ -110,204 +197,118 @@ def test_sync_returns_the_current_ledger_plan_when_disabled(disabled, ledger):
 
 
 def test_customer_creation_is_none_when_disabled(disabled, ledger):
-    assert billing.get_or_create_customer(ledger, "acct1") is None
+    assert billing.get_or_create_customer(ledger, "acct1", email="a@b.com") is None
 
 
 # --------------------------------------------------------------------------- #
 # Customer creation
 # --------------------------------------------------------------------------- #
 def test_customer_is_created_once_and_then_reused(enabled, ledger, monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        billing.stripe.Customer, "create",
-        lambda **kw: calls.append(kw) or SimpleNamespace(id="cus_abc"))
+    customers = _FakeCustomersClient(customer_id="ctm_abc")
+    _patch_client(monkeypatch, _FakeClient(customers=customers))
 
     first = billing.get_or_create_customer(ledger, "acct1", email="a@b.com")
     second = billing.get_or_create_customer(ledger, "acct1", email="a@b.com")
 
-    assert first == second == "cus_abc"
-    assert len(calls) == 1, "a second call must reuse the persisted customer"
-    assert calls[0]["email"] == "a@b.com"
-    assert calls[0]["metadata"]["bottrade_account_id"] == "acct1"
+    assert first == second == "ctm_abc"
+    assert len(customers.calls) == 1, "a second call must reuse the persisted customer"
+    assert customers.calls[0].email == "a@b.com"
+    assert customers.calls[0].custom_data.data["bottrade_account_id"] == "acct1"
+    assert ledger.get_paddle_customer_id("acct1") == "ctm_abc"
+
+
+def test_customer_creation_is_deferred_with_no_email(enabled, ledger, monkeypatch):
+    customers = _FakeCustomersClient()
+    _patch_client(monkeypatch, _FakeClient(customers=customers))
+    assert billing.get_or_create_customer(ledger, "acct1") is None
+    assert len(customers.calls) == 0, "Paddle requires an email — no call should be made"
 
 
 def test_customer_creation_failure_does_not_raise(enabled, ledger, monkeypatch):
-    def _explode(**kw):
-        raise billing.stripe.error.StripeError("network down")
-    monkeypatch.setattr(billing.stripe.Customer, "create", _explode)
-    assert billing.get_or_create_customer(ledger, "acct1") is None
+    _patch_client(monkeypatch, _FakeClient(customers=_FakeCustomersClient(explode=True)))
+    assert billing.get_or_create_customer(ledger, "acct1", email="a@b.com") is None
 
 
 # --------------------------------------------------------------------------- #
 # Checkout
 # --------------------------------------------------------------------------- #
-def test_checkout_session_uses_the_right_price_and_persists_the_customer(
+def test_checkout_config_uses_the_right_price_and_persists_the_customer(
     enabled, ledger, monkeypatch,
 ):
-    monkeypatch.setattr(billing.stripe.Customer, "create",
-                        lambda **kw: SimpleNamespace(id="cus_abc"))
-    captured = {}
+    customers = _FakeCustomersClient(customer_id="ctm_abc")
+    _patch_client(monkeypatch, _FakeClient(customers=customers))
 
-    def fake_create(**kw):
-        captured.update(kw)
-        return SimpleNamespace(url="https://checkout.stripe.com/xyz")
+    cfg = billing.checkout_config(
+        ledger, "acct1", "PRO", "http://x/ok", email="a@b.com")
 
-    monkeypatch.setattr(billing.stripe.checkout.Session, "create", fake_create)
-
-    url = billing.create_checkout_session(
-        ledger, "acct1", "PRO", "http://x/ok", "http://x/no", email="a@b.com")
-
-    assert url == "https://checkout.stripe.com/xyz"
-    assert captured["customer"] == "cus_abc"
-    assert captured["mode"] == "subscription"
-    assert captured["line_items"] == [{"price": "price_pro_123", "quantity": 1}]
-    assert captured["metadata"]["plan_id"] == "PRO"
-    assert ledger.get_stripe_customer_id("acct1") == "cus_abc"
+    assert cfg is not None
+    assert cfg["customer_id"] == "ctm_abc"
+    assert cfg["price_id"] == "pri_pro_123"
+    assert cfg["client_token"] == "test_fake_client_token"
+    assert cfg["environment"] == "sandbox"
+    assert cfg["custom_data"] == {"bottrade_account_id": "acct1", "plan_id": "PRO"}
+    assert cfg["success_url"] == "http://x/ok"
+    assert ledger.get_paddle_customer_id("acct1") == "ctm_abc"
 
 
-def test_checkout_session_is_none_for_an_unpriced_plan(enabled, ledger):
-    assert billing.create_checkout_session(
-        ledger, "acct1", "FREE", "http://x/ok", "http://x/no") is None
+def test_checkout_config_is_none_for_an_unpriced_plan(enabled, ledger, monkeypatch):
+    _patch_client(monkeypatch, _FakeClient())
+    assert billing.checkout_config(
+        ledger, "acct1", "FREE", "http://x/ok", email="a@b.com") is None
 
 
-def test_checkout_session_failure_does_not_raise(enabled, ledger, monkeypatch):
-    monkeypatch.setattr(billing.stripe.Customer, "create",
-                        lambda **kw: SimpleNamespace(id="cus_abc"))
-
-    def _explode(**kw):
-        raise billing.stripe.error.StripeError("card processing down")
-    monkeypatch.setattr(billing.stripe.checkout.Session, "create", _explode)
-
-    assert billing.create_checkout_session(
-        ledger, "acct1", "PRO", "http://x/ok", "http://x/no") is None
+def test_checkout_config_is_none_with_no_email_yet(enabled, ledger, monkeypatch):
+    customers = _FakeCustomersClient()
+    _patch_client(monkeypatch, _FakeClient(customers=customers))
+    assert billing.checkout_config(ledger, "acct1", "PRO", "http://x/ok") is None
+    assert len(customers.calls) == 0
 
 
-# --------------------------------------------------------------------------- #
-# Confirming a checkout
-# --------------------------------------------------------------------------- #
-class _FakeMetadata:
-    """Mimics the real stripe.StripeObject metadata field closely enough to
-    catch what a plain dict fake hides.
-
-    The live SDK's StripeObject deliberately has NO ``.get()`` — it raises an
-    AttributeError pointing at ``.to_dict()`` instead. billing.py originally
-    called ``.get()`` directly on `session.metadata`, which every test here
-    passed because the fake was a plain dict. It only broke against a real
-    Stripe test-mode checkout. This fake exists so that regression can't
-    hide again: it supports exactly what the real object supports.
-    """
-    def __init__(self, data: dict):
-        self._data = dict(data)
-
-    def to_dict(self) -> dict:
-        return dict(self._data)
-
-    def __bool__(self) -> bool:
-        return bool(self._data)
+def test_checkout_config_is_none_without_a_client_token(enabled, ledger, monkeypatch):
+    monkeypatch.setattr(billing.settings, "paddle_client_token", None)
+    _patch_client(monkeypatch, _FakeClient())
+    assert billing.checkout_config(
+        ledger, "acct1", "PRO", "http://x/ok", email="a@b.com") is None
 
 
-def _fake_session(**overrides):
-    base = dict(
-        payment_status="paid", status="complete",
-        metadata=_FakeMetadata({"bottrade_account_id": "acct1", "plan_id": "PRO"}),
-        client_reference_id="acct1",
-        subscription=SimpleNamespace(id="sub_999"),
-        line_items=None,
-    )
-    base.update(overrides)
-    return SimpleNamespace(**base)
-
-
-def test_confirm_applies_the_plan_on_a_paid_session(enabled, ledger, monkeypatch):
-    monkeypatch.setattr(billing.stripe.checkout.Session, "retrieve",
-                        lambda *a, **kw: _fake_session())
-    plan = billing.confirm_checkout_session(ledger, "cs_test_123")
-    assert plan == "PRO"
-    assert ledger.get_plan_id("acct1") == "PRO"
-    assert ledger.get_stripe_subscription_id("acct1") == "sub_999"
-
-
-def test_confirm_rejects_an_unpaid_session(enabled, ledger, monkeypatch):
-    """A session_id in a URL is not proof of payment on its own."""
-    unpaid = _fake_session(payment_status="unpaid", status="open")
-    monkeypatch.setattr(billing.stripe.checkout.Session, "retrieve",
-                        lambda *a, **kw: unpaid)
-    assert billing.confirm_checkout_session(ledger, "cs_bad") is None
-    assert ledger.get_plan_id("acct1") == "FREE"
-
-
-def test_confirm_falls_back_to_client_reference_id(enabled, ledger, monkeypatch):
-    session = _fake_session(metadata=_FakeMetadata({}), client_reference_id="acct2")
-    monkeypatch.setattr(billing.stripe.checkout.Session, "retrieve",
-                        lambda *a, **kw: session)
-    # No plan_id in metadata and no line_items to derive it from -> unresolvable.
-    assert billing.confirm_checkout_session(ledger, "cs_x") is None
-
-
-def test_as_dict_handles_a_stripeobject_style_fake_with_no_get(enabled):
-    """Guards the exact regression found against a real Stripe checkout:
-    session.metadata is a StripeObject with no .get() at all."""
-    assert billing._as_dict(_FakeMetadata({"plan_id": "PRO"})) == {"plan_id": "PRO"}
-    assert billing._as_dict(None) == {}
-    assert billing._as_dict({"already": "a dict"}) == {"already": "a dict"}
-
-
-def test_confirm_handles_a_retrieve_failure(enabled, ledger, monkeypatch):
-    def _explode(*a, **kw):
-        raise billing.stripe.error.StripeError("boom")
-    monkeypatch.setattr(billing.stripe.checkout.Session, "retrieve", _explode)
-    assert billing.confirm_checkout_session(ledger, "cs_x") is None
+def test_checkout_config_is_none_when_customer_creation_fails(enabled, ledger, monkeypatch):
+    _patch_client(monkeypatch, _FakeClient(customers=_FakeCustomersClient(explode=True)))
+    assert billing.checkout_config(
+        ledger, "acct1", "PRO", "http://x/ok", email="a@b.com") is None
 
 
 # --------------------------------------------------------------------------- #
-# Billing Portal
+# Customer Portal
 # --------------------------------------------------------------------------- #
-def test_portal_requires_an_existing_customer(enabled, ledger):
-    assert billing.create_portal_session(ledger, "acct1", "http://x") is None
+def test_portal_requires_an_existing_customer(enabled, ledger, monkeypatch):
+    _patch_client(monkeypatch, _FakeClient())
+    assert billing.create_portal_session(ledger, "acct1") is None
 
 
 def test_portal_session_for_an_existing_customer(enabled, ledger, monkeypatch):
-    ledger.set_stripe_customer_id("acct1", "cus_abc")
-    monkeypatch.setattr(
-        billing.stripe.billing_portal.Session, "create",
-        lambda **kw: SimpleNamespace(url="https://billing.stripe.com/p/xyz"))
-    url = billing.create_portal_session(ledger, "acct1", "http://return")
-    assert url == "https://billing.stripe.com/p/xyz"
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    portal = _FakePortalClient(overview="https://sandbox-customer-portal.paddle.com/x")
+    _patch_client(monkeypatch, _FakeClient(customer_portal_sessions=portal))
+
+    url = billing.create_portal_session(ledger, "acct1")
+    assert url == "https://sandbox-customer-portal.paddle.com/x"
+    assert portal.calls[0][0] == "ctm_abc"
 
 
 def test_portal_session_failure_does_not_raise(enabled, ledger, monkeypatch):
-    ledger.set_stripe_customer_id("acct1", "cus_abc")
-
-    def _explode(**kw):
-        raise billing.stripe.error.StripeError("boom")
-    monkeypatch.setattr(billing.stripe.billing_portal.Session, "create", _explode)
-    assert billing.create_portal_session(ledger, "acct1", "http://x") is None
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    _patch_client(monkeypatch, _FakeClient(
+        customer_portal_sessions=_FakePortalClient(explode=True)))
+    assert billing.create_portal_session(ledger, "acct1") is None
 
 
 # --------------------------------------------------------------------------- #
 # Reconciliation
 # --------------------------------------------------------------------------- #
-class _FakeSubscription(dict):
-    """Real Stripe subscription objects are dict subclasses (StripeObject),
-    so billing.py reads them with `sub["items"]["data"]` — a SimpleNamespace
-    can't stand in for that; only something actually subscriptable can."""
-    def __init__(self, sub_id: str, items: list[dict]):
-        super().__init__(items={"data": items})
-        self.id = sub_id
-
-
-def _sub_list(items: list[dict]):
-    """Stand in for stripe.Subscription.list(...)'s ListObject."""
-    subs = [_FakeSubscription(it["sub_id"], it["items"]) for it in items]
-    return SimpleNamespace(auto_paging_iter=lambda: iter(subs))
-
-
 def test_sync_notices_a_live_cancellation(enabled, ledger, monkeypatch):
-    ledger.set_stripe_customer_id("acct1", "cus_abc")
-    ledger.set_plan_id("acct1", "PRO", stripe_subscription_id="sub_999")
-
-    empty = SimpleNamespace(auto_paging_iter=lambda: iter([]))
-    monkeypatch.setattr(billing.stripe.Subscription, "list", lambda **kw: empty)
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    ledger.set_plan_id("acct1", "PRO", paddle_subscription_id="sub_999")
+    _patch_client(monkeypatch, _FakeClient(subscriptions=_FakeSubscriptionsClient(subs=[])))
 
     plan = billing.sync_subscription_status(ledger, "acct1", force=True)
     assert plan == "FREE"
@@ -315,51 +316,57 @@ def test_sync_notices_a_live_cancellation(enabled, ledger, monkeypatch):
 
 
 def test_sync_confirms_a_still_active_subscription(enabled, ledger, monkeypatch):
-    ledger.set_stripe_customer_id("acct1", "cus_abc")
-    ledger.set_plan_id("acct1", "PRO", stripe_subscription_id="sub_999")
-    active = _sub_list([{"sub_id": "sub_999",
-                        "items": [{"price": {"id": "price_pro_123"}}]}])
-    monkeypatch.setattr(billing.stripe.Subscription, "list", lambda **kw: active)
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    ledger.set_plan_id("acct1", "PRO", paddle_subscription_id="sub_999")
+    active = [_fake_sub("sub_999", "pri_pro_123")]
+    _patch_client(monkeypatch, _FakeClient(subscriptions=_FakeSubscriptionsClient(subs=active)))
 
     plan = billing.sync_subscription_status(ledger, "acct1", force=True)
     assert plan == "PRO"
 
 
 def test_sync_is_cached_within_the_ttl(enabled, ledger, monkeypatch):
-    ledger.set_stripe_customer_id("acct1", "cus_abc")
-    calls = []
-    empty = SimpleNamespace(auto_paging_iter=lambda: iter([]))
-    monkeypatch.setattr(billing.stripe.Subscription, "list",
-                        lambda **kw: calls.append(1) or empty)
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    subs = _FakeSubscriptionsClient(subs=[])
+    _patch_client(monkeypatch, _FakeClient(subscriptions=subs))
 
     billing.sync_subscription_status(ledger, "acct1", force=True)
     billing.sync_subscription_status(ledger, "acct1")   # within TTL, no force
-    assert len(calls) == 1
+    assert len(subs.calls) == 1
 
 
 def test_sync_bypasses_the_cache_when_forced(enabled, ledger, monkeypatch):
-    ledger.set_stripe_customer_id("acct1", "cus_abc")
-    calls = []
-    empty = SimpleNamespace(auto_paging_iter=lambda: iter([]))
-    monkeypatch.setattr(billing.stripe.Subscription, "list",
-                        lambda **kw: calls.append(1) or empty)
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    subs = _FakeSubscriptionsClient(subs=[])
+    _patch_client(monkeypatch, _FakeClient(subscriptions=subs))
 
     billing.sync_subscription_status(ledger, "acct1", force=True)
     billing.sync_subscription_status(ledger, "acct1", force=True)
-    assert len(calls) == 2
+    assert len(subs.calls) == 2
 
 
-def test_sync_with_no_customer_yet_stays_on_current_plan(enabled, ledger):
+def test_sync_with_no_customer_yet_stays_on_current_plan(enabled, ledger, monkeypatch):
+    _patch_client(monkeypatch, _FakeClient())
     assert billing.sync_subscription_status(ledger, "acct1") == "FREE"
 
 
-def test_sync_survives_a_stripe_outage(enabled, ledger, monkeypatch):
-    ledger.set_stripe_customer_id("acct1", "cus_abc")
+def test_sync_survives_a_paddle_outage(enabled, ledger, monkeypatch):
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
     ledger.set_plan_id("acct1", "PRO")
-
-    def _explode(**kw):
-        raise billing.stripe.error.StripeError("down")
-    monkeypatch.setattr(billing.stripe.Subscription, "list", _explode)
+    _patch_client(monkeypatch, _FakeClient(
+        subscriptions=_FakeSubscriptionsClient(explode=True)))
 
     # Must not raise, and must not downgrade a paying customer on an outage.
     assert billing.sync_subscription_status(ledger, "acct1", force=True) == "PRO"
+
+
+def test_sync_passes_the_active_and_trialing_states_to_paddle(enabled, ledger, monkeypatch):
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    subs = _FakeSubscriptionsClient(subs=[])
+    _patch_client(monkeypatch, _FakeClient(subscriptions=subs))
+
+    billing.sync_subscription_status(ledger, "acct1", force=True)
+    operation = subs.calls[0]
+    assert operation.customer_ids == ["ctm_abc"]
+    assert billing.SubscriptionStatus.Active in operation.statuses
+    assert billing.SubscriptionStatus.Trialing in operation.statuses

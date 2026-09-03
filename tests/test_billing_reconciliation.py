@@ -1,6 +1,6 @@
 """
 Tests for plan reconciliation — the mechanism that notices a subscription
-that was cancelled or whose renewal failed entirely on Stripe's side.
+that was cancelled or whose renewal failed entirely on Paddle's side.
 
 The bug these cover: sync_subscription_status was called from exactly one
 place, dashboard/pages/2_Settings.py, while Tenant.plan (read by the sidebar,
@@ -41,8 +41,8 @@ def test_plan_calls_reconciliation(monkeypatch, ledger):
     assert calls == ["user:a@b.com"]
 
 
-def test_plan_reflects_a_downgrade_stripe_reports(monkeypatch, ledger):
-    """The regression: ledger says PRO, Stripe says the subscription is gone."""
+def test_plan_reflects_a_downgrade_paddle_reports(monkeypatch, ledger):
+    """The regression: ledger says PRO, Paddle says the subscription is gone."""
     ledger.ensure_account("user:a@b.com", "PRO")
     ledger.set_plan_id("user:a@b.com", "PRO")
 
@@ -80,14 +80,14 @@ def test_plan_reconciles_against_the_person_not_the_active_key(monkeypatch, ledg
 # --------------------------------------------------------------------------- #
 # Reconciliation must never break a render or a trading cycle
 # --------------------------------------------------------------------------- #
-def test_stripe_failure_falls_back_to_the_stored_plan(monkeypatch, ledger):
+def test_paddle_failure_falls_back_to_the_stored_plan(monkeypatch, ledger):
     ledger.ensure_account("acct", "PRO")
     ledger.set_plan_id("acct", "PRO")
 
     import saas.billing as billing_mod
 
     def _explode(led, account_id, force=False):
-        raise RuntimeError("stripe unreachable")
+        raise RuntimeError("paddle unreachable")
 
     monkeypatch.setattr(billing_mod, "sync_subscription_status", _explode)
 
@@ -126,32 +126,57 @@ def test_entitlement_goes_through_the_reconciled_plan(monkeypatch, ledger):
 
 
 # --------------------------------------------------------------------------- #
-# The Stripe HTTP client is bounded
+# The Paddle HTTP client is bounded
 # --------------------------------------------------------------------------- #
-def test_stripe_client_sets_a_short_timeout(monkeypatch):
-    """Reconciliation runs on the trading loop's path, so Stripe's 80-second
-    default would let one slow request stall a whole trading decision."""
-    import stripe
+def test_paddle_client_sets_a_short_timeout(monkeypatch):
+    """Reconciliation runs on the trading loop's path, so the SDK's own
+    default timeout/retry policy would let one slow request stall a whole
+    trading decision — billing.py must override both explicitly."""
     import saas.billing as billing_mod
 
-    monkeypatch.setattr(billing_mod, "_http_configured", False)
-    monkeypatch.setattr(billing_mod.settings, "stripe_secret_key",
-                        "sk_test_dummy", raising=False)
+    captured = {}
+
+    class _FakeSdkClient:
+        def __init__(self, api_key, options=None, timeout=None, retry_count=None):
+            captured["api_key"] = api_key
+            captured["timeout"] = timeout
+            captured["retry_count"] = retry_count
+
+    monkeypatch.setattr(billing_mod, "Client", _FakeSdkClient)
+    monkeypatch.setattr(billing_mod, "_client_instance", None)
+    monkeypatch.setattr(billing_mod.settings, "paddle_api_key",
+                        "pdl_test_dummy", raising=False)
+    monkeypatch.setattr(billing_mod.settings, "paddle_environment",
+                        "sandbox", raising=False)
+
     billing_mod._client()
 
     assert billing_mod._HTTP_TIMEOUT_SEC <= 15
-    assert stripe.max_network_retries <= 2
-    timeout = getattr(stripe.default_http_client, "_timeout", None)
-    assert timeout == billing_mod._HTTP_TIMEOUT_SEC
+    assert captured["timeout"] == billing_mod._HTTP_TIMEOUT_SEC
+    assert captured["retry_count"] == billing_mod._MAX_RETRIES
+    assert captured["api_key"] == "pdl_test_dummy"
 
 
-def test_http_client_is_configured_once(monkeypatch):
+def test_client_is_configured_once(monkeypatch):
+    """The Paddle SDK client is a real object to construct (unlike Stripe's
+    module-level api_key assignment) — it must be built once and cached,
+    not reconstructed on every call."""
     import saas.billing as billing_mod
 
-    monkeypatch.setattr(billing_mod, "_http_configured", False)
-    monkeypatch.setattr(billing_mod.settings, "stripe_secret_key",
-                        "sk_test_dummy", raising=False)
-    billing_mod._client()
-    first = billing_mod.stripe.default_http_client
-    billing_mod._client()
-    assert billing_mod.stripe.default_http_client is first
+    calls = []
+
+    class _FakeSdkClient:
+        def __init__(self, *a, **kw):
+            calls.append(1)
+
+    monkeypatch.setattr(billing_mod, "Client", _FakeSdkClient)
+    monkeypatch.setattr(billing_mod, "_client_instance", None)
+    monkeypatch.setattr(billing_mod.settings, "paddle_api_key",
+                        "pdl_test_dummy", raising=False)
+    monkeypatch.setattr(billing_mod.settings, "paddle_environment",
+                        "sandbox", raising=False)
+
+    first = billing_mod._client()
+    second = billing_mod._client()
+    assert first is second
+    assert len(calls) == 1

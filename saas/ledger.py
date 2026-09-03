@@ -127,9 +127,15 @@ class UsageLedger:
         """Add columns introduced after the original schema.
 
         `CREATE TABLE IF NOT EXISTS` in `_SCHEMA` only helps a brand-new
-        database — an existing `data/usage.db` from before Stripe billing
-        was added has an `accounts` table with no Stripe columns at all, and
-        SQLite has no `ADD COLUMN IF NOT EXISTS`. Caller must hold `_lock`.
+        database — an existing `data/usage.db` from before billing was added
+        has an `accounts` table with none of these columns, and SQLite has
+        no `ADD COLUMN IF NOT EXISTS`. Caller must hold `_lock`.
+
+        `stripe_customer_id`/`stripe_subscription_id` are kept, not dropped,
+        even though billing runs on Paddle now (SQLite has no clean `DROP
+        COLUMN` story before 3.35, and there is no live data left to lose —
+        this project never took a live Stripe payment). The `paddle_*`
+        columns are the ones actually read and written from here on.
         """
         cols = {row["name"] for row in
                self._conn.execute("PRAGMA table_info(accounts)").fetchall()}
@@ -139,6 +145,12 @@ class UsageLedger:
         if "stripe_subscription_id" not in cols:
             self._conn.execute(
                 "ALTER TABLE accounts ADD COLUMN stripe_subscription_id TEXT")
+        if "paddle_customer_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE accounts ADD COLUMN paddle_customer_id TEXT")
+        if "paddle_subscription_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE accounts ADD COLUMN paddle_subscription_id TEXT")
 
     # -- accounts ----------------------------------------------------------
     def ensure_account(self, account_id: str, plan_id: str = "FREE") -> str:
@@ -196,10 +208,56 @@ class UsageLedger:
             ).fetchone()
         return row["account_id"] if row else None
 
+    def get_paddle_customer_id(self, account_id: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT paddle_customer_id FROM accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+        return row["paddle_customer_id"] if row else None
+
+    def set_paddle_customer_id(self, account_id: str, customer_id: str) -> None:
+        self.ensure_account(account_id)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE accounts SET paddle_customer_id = ?, updated_at = ? "
+                "WHERE account_id = ?",
+                (customer_id, _now().isoformat(), account_id),
+            )
+            self._conn.commit()
+
+    def get_paddle_subscription_id(self, account_id: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT paddle_subscription_id FROM accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+        return row["paddle_subscription_id"] if row else None
+
+    def account_id_for_paddle_customer(self, customer_id: str) -> Optional[str]:
+        """Reverse lookup — the account a given Paddle customer belongs to."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT account_id FROM accounts WHERE paddle_customer_id = ?",
+                (customer_id,),
+            ).fetchone()
+        return row["account_id"] if row else None
+
     def set_plan_id(self, account_id: str, plan_id: str,
-                    stripe_subscription_id: Optional[str] = None) -> None:
+                    stripe_subscription_id: Optional[str] = None,
+                    paddle_subscription_id: Optional[str] = None) -> None:
         self.ensure_account(account_id, plan_id)
         with self._lock:
+            if paddle_subscription_id is not None:
+                self._conn.execute(
+                    "UPDATE accounts SET plan_id = ?, "
+                    "paddle_subscription_id = ?, updated_at = ? "
+                    "WHERE account_id = ?",
+                    (plan_id, paddle_subscription_id, _now().isoformat(),
+                     account_id),
+                )
+                self._conn.commit()
+                return
             if stripe_subscription_id is not None:
                 self._conn.execute(
                     "UPDATE accounts SET plan_id = ?, "
