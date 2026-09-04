@@ -44,6 +44,7 @@ primary_region = "iad"  # us-east (Ashburn, VA) — change to whatever is closes
   # background daemon thread (trading/live_engine.py) that keeps placing
   # decisions whether or not anyone has the dashboard open. Auto-stop would
   # silently pause every user's bot the moment they close the tab.
+  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
 
