@@ -28,7 +28,6 @@ Usage
 from __future__ import annotations
 
 import logging
-import sys
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Optional

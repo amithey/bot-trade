@@ -59,7 +59,7 @@ tqdm==4.67.3                   # progress bars
 requests==2.33.0
 
 # --- Billing --------------------------------------------------------------
-# Required only when STRIPE_SECRET_KEY is configured; without it billing is
+# Required only when PADDLE_API_KEY is configured; without it billing is
 # disabled and every account stays on the Free plan. See saas/billing.py.
 paddle-python-sdk==1.15.0
 

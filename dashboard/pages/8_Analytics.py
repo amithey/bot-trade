@@ -15,13 +15,12 @@ if str(_ROOT) not in _sys.path:
 
 from datetime import datetime
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard._shared import (
-    BG_PANEL, BORDER, C_BUY, C_HOLD, C_SELL, CYAN, GRID, TEXT, TEXT_DIM,
+    BG_PANEL, C_BUY, C_SELL, CYAN, GRID, TEXT, TEXT_DIM,
     secure_page, ensure_portfolio_in_session, ensure_profile_in_session,
 )
 

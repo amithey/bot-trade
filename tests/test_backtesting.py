@@ -19,8 +19,7 @@ from __future__ import annotations
 
 import sys
 import types
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import pandas as pd
 import pytest

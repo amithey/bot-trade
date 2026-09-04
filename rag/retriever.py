@@ -49,7 +49,7 @@ import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 from config.settings import settings
-from market_data.fetcher import MACDParams, MarketSnapshot
+from market_data.fetcher import MarketSnapshot
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -632,7 +632,6 @@ class StrategyRetriever:
         macd: float, signal: float, hist: float,
         cross: str, momentum: str,
     ) -> str:
-        hist_abs = abs(hist)
         direction = "above" if macd > signal else "below"
         return (
             f"MACD line ({macd:.4f}) is {direction} the signal line ({signal:.4f}), "
@@ -785,157 +784,3 @@ class StrategyRetriever:
             market_regime=regime,
             collection_size=collection_size,
         )
-
-
-# ---------------------------------------------------------------------------
-# __main__ — smoke-test with a synthetic MarketSnapshot
-# ---------------------------------------------------------------------------
-
-
-if __name__ == "__main__":
-    import numpy as np
-    import pandas as pd
-    from datetime import date, timedelta
-
-    from rich import box
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.text import Text
-
-    console = Console()
-
-    # ------------------------------------------------------------------ #
-    # Build a synthetic MarketSnapshot to avoid needing a live network
-    # call during a RAG unit test.
-    #
-    # Scenario: Deeply oversold stock (RSI = 25) with a bearish MACD but
-    # potentially exhausted sellers — a classic "watch for reversal" setup.
-    # ------------------------------------------------------------------ #
-    console.rule("[bold yellow]Building synthetic MarketSnapshot[/bold yellow]")
-
-    NUM_ROWS = 5
-    today = date.today()
-    idx = pd.date_range(end=today, periods=NUM_ROWS, freq="B")  # business days
-
-    # Price around $142 with a slight downtrend
-    closes = np.array([155.0, 151.0, 147.0, 143.0, 142.0])
-
-    synthetic_data = pd.DataFrame(
-        {
-            "Open":  closes - 1.0,
-            "High":  closes + 1.5,
-            "Low":   closes - 2.0,
-            "Close": closes,
-            "Volume": np.array([38_000_000, 42_000_000, 55_000_000, 61_000_000, 70_000_000]),
-            # Oversold RSI (25) — capitulation-level selling
-            "RSI_14":       [45.0, 38.0, 32.0, 27.0, 25.0],
-            # Price below all SMAs — confirmed downtrend
-            "SMA_20":       [162.0, 161.0, 160.5, 159.0, 158.0],
-            "SMA_50":       [168.0, 167.5, 167.0, 166.5, 166.0],
-            "SMA_200":      [175.0, 174.8, 174.6, 174.4, 174.2],
-            # Bearish MACD: line below signal, expanding negative histogram
-            "MACD":         [-0.80, -1.10, -1.45, -1.70, -1.85],
-            "MACD_Signal":  [-0.30, -0.55, -0.80, -1.05, -1.25],
-            "MACD_Histogram": [-0.50, -0.55, -0.65, -0.65, -0.60],
-        },
-        index=idx,
-    )
-
-    mock_snapshot = MarketSnapshot(
-        ticker="MOCK",
-        data=synthetic_data,
-        sma_periods=(20, 50, 200),
-        rsi_period=14,
-        macd_params=MACDParams(fast=12, slow=26, signal=9),
-    )
-
-    console.print(
-        Panel(
-            f"[bold]Ticker:[/bold] MOCK\n"
-            f"[bold]Close:[/bold]  $142.00\n"
-            f"[bold]RSI-14:[/bold] 25.0  ([red]Oversold — extreme selling[/red])\n"
-            f"[bold]MACD:[/bold]   −1.85 vs Signal −1.25 "
-            f"([yellow]Bearish crossover, histogram fading[/yellow])\n"
-            f"[bold]Trend:[/bold]  Price below SMA_20 < SMA_50 < SMA_200 "
-            f"([red]Death cross, strong downtrend[/red])",
-            title="[cyan]Synthetic Market Conditions[/cyan]",
-            expand=False,
-        )
-    )
-
-    # ------------------------------------------------------------------ #
-    # Instantiate retriever and show the generated query
-    # ------------------------------------------------------------------ #
-    retriever = StrategyRetriever()
-
-    regime = retriever._compute_market_regime(mock_snapshot)
-    query  = retriever._snapshot_to_query(mock_snapshot, regime)
-
-    console.rule("[bold cyan]Classified Market Regime[/bold cyan]")
-    regime_table = Table(box=box.SIMPLE, show_header=True, header_style="bold magenta")
-    regime_table.add_column("Signal", style="dim")
-    regime_table.add_column("Classification", style="bold")
-    for key, val in regime.items():
-        color = (
-            "red"    if any(w in val for w in ("Bear", "Death", "Downtrend", "Oversold")) else
-            "green"  if any(w in val for w in ("Bull", "Golden", "Uptrend"))             else
-            "yellow"
-        )
-        regime_table.add_row(key.replace("_", " ").title(), f"[{color}]{val}[/{color}]")
-    console.print(regime_table)
-
-    console.rule("[bold cyan]Generated Natural-Language Query[/bold cyan]")
-    console.print(Panel(query, title="Query → ChromaDB", expand=True))
-
-    # ------------------------------------------------------------------ #
-    # Attempt retrieval (will warn gracefully if collection is empty)
-    # ------------------------------------------------------------------ #
-    console.rule("[bold cyan]Retrieval Results[/bold cyan]")
-
-    result = retriever.get_relevant_strategies(mock_snapshot, top_k=3)
-
-    info = retriever.collection_info()
-    console.print(
-        f"[dim]Collection:[/dim] {info['collection_name']}  |  "
-        f"[dim]Documents:[/dim] {info['document_count']}  |  "
-        f"[dim]Status:[/dim] {info['status']}"
-    )
-
-    if not result.found:
-        console.print(
-            Panel(
-                "[yellow]No strategy chunks retrieved.[/yellow]\n\n"
-                "The ChromaDB collection is either empty or no results passed the "
-                f"distance threshold ({retriever._distance_threshold}).\n\n"
-                "To populate it, run:\n"
-                "  [bold cyan]python -m knowledge_ingestion.youtube_scraper "
-                "--url <YOUTUBE_URL> --title 'Strategy Name'[/bold cyan]",
-                title="[yellow]Empty Knowledge Base[/yellow]",
-                expand=False,
-            )
-        )
-    else:
-        chunks_table = Table(
-            title=f"Top {len(result.chunks)} Retrieved Strategy Chunks",
-            box=box.ROUNDED,
-            show_header=True,
-            header_style="bold magenta",
-        )
-        chunks_table.add_column("#", style="dim", width=3)
-        chunks_table.add_column("Score", justify="right", width=7)
-        chunks_table.add_column("Source", width=25)
-        chunks_table.add_column("Excerpt (first 200 chars)")
-
-        for i, chunk in enumerate(result.chunks, start=1):
-            score_color = "green" if chunk.similarity_score > 0.7 else "yellow"
-            chunks_table.add_row(
-                str(i),
-                f"[{score_color}]{chunk.similarity_score:.3f}[/{score_color}]",
-                chunk.source_title[:25],
-                chunk.document[:200].replace("\n", " ") + "…",
-            )
-        console.print(chunks_table)
-
-    console.print()
-    console.print(f"[bold green]RetrievalResult:[/bold green] {result!r}")

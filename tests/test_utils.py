@@ -14,7 +14,6 @@ original hooks afterwards so no test leaks state into another.
 """
 from __future__ import annotations
 
-import io
 import logging
 import sys
 import threading
@@ -29,7 +28,6 @@ from utils.market_logic import get_market_status, is_market_open
 
 import utils.crash_reporter as crash_mod
 
-import utils.hf_quiet as hf_quiet_mod
 from utils.hf_quiet import configure_quiet_hf, quiet_model_load
 
 import utils.logger as logger_mod

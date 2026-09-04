@@ -6,7 +6,7 @@ Heavy on tokens, so the LLM call only fires when the user clicks the
 from __future__ import annotations
 
 import html as _html
-from datetime import datetime, timezone
+from datetime import datetime
 from urllib.parse import urlparse
 
 import streamlit as st

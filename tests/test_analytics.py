@@ -257,7 +257,6 @@ class _FakeHistoryTicker:
 
 
 def test_benchmark_equity_rescales_to_initial_value(monkeypatch):
-    import analytics.performance as perf_mod
     fake_yf = type("FakeYF", (), {
         "Ticker": staticmethod(lambda t: _FakeHistoryTicker([100.0, 110.0, 121.0])),
         "set_tz_cache_location": staticmethod(lambda p: None),
@@ -554,7 +553,6 @@ def test_correlation_matrix_returns_none_with_fewer_than_two_tickers():
 
 
 def test_correlation_matrix_dedupes_and_uppercases_tickers(monkeypatch):
-    import analytics.holdings_risk as hr_mod
     seen = {}
 
     def fake_download(tickers, **kw):

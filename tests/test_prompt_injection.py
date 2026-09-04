@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
 
 from decision_engine.ai_engine import (
     _SYSTEM_PROMPT,

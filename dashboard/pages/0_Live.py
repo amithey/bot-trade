@@ -28,7 +28,7 @@ from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
 from dashboard._shared import (
-    BG_DEEP, BG_PANEL, BORDER, C_BUY, C_HOLD, C_SELL, CUSTOM_LABEL, CYAN,
+    BG_DEEP, BORDER, C_BUY, C_HOLD, C_SELL, CUSTOM_LABEL, CYAN,
     DEFAULT_TICKERS, GRID, RISK_CHOICES, TEXT, TEXT_DIM, TEXT_HI,
     account_id as _account_id,
     secure_page, ensure_event_buffer, ensure_portfolio_in_session,

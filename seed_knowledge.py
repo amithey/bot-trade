@@ -17,7 +17,6 @@ import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from config.settings import settings
-import hashlib
 
 # ---------------------------------------------------------------------------
 # 4 Detailed Trading Strategies for Bitcoin

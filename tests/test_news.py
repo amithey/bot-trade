@@ -13,11 +13,8 @@ and RSS providers are exercised either through a fake NewsProvider or with
 """
 from __future__ import annotations
 
-import time
 import urllib.error
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 

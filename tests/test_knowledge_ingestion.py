@@ -13,8 +13,6 @@ No real network, no real ChromaDB, no real YouTube/yt-dlp calls anywhere:
 """
 from __future__ import annotations
 
-import sys
-import types
 
 import pytest
 
@@ -22,7 +20,6 @@ import knowledge_ingestion.article_scraper as article_mod
 from knowledge_ingestion.article_scraper import (
     ArticleScraper,
     ArticleIngestionResult,
-    _TextExtractor,
     extract_readable_text,
 )
 

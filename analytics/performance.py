@@ -9,7 +9,7 @@ of ``DailySnapshot`` objects, both lifted directly from
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Iterable, Optional
 
 import numpy as np

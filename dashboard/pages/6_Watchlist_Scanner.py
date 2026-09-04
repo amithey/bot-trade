@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pandas as pd
 import streamlit as st
 
 # ── sys.path bootstrap (so `from dashboard...` works in direct `streamlit run`)
@@ -26,7 +25,7 @@ if str(_ROOT) not in _sys.path:
 # ────────────────────────────────────────────────────────────────────────────
 
 from dashboard._shared import (
-    BORDER, C_BUY, C_HOLD, C_SELL, CYAN, DEFAULT_TICKERS, TEXT, TEXT_DIM,
+    C_BUY, C_HOLD, C_SELL, DEFAULT_TICKERS, TEXT, TEXT_DIM,
     secure_page, ensure_profile_in_session,
 )
 
