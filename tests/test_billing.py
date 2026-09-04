@@ -123,13 +123,18 @@ def _fake_sub(sub_id: str, price_id: str):
 
 
 class _FakeSubscriptionsClient:
-    def __init__(self, subs: list | None = None, explode: bool = False):
+    def __init__(self, subs: list | None = None, explode: bool = False,
+                stall_seconds: float = 0.0):
         self.calls: list = []
         self._subs = subs if subs is not None else []
         self._explode = explode
+        self._stall_seconds = stall_seconds
 
     def list(self, operation):
         self.calls.append(operation)
+        if self._stall_seconds:
+            import time as _time
+            _time.sleep(self._stall_seconds)
         if self._explode:
             raise billing.ApiError.__new__(billing.ApiError)
         return list(self._subs)
@@ -357,6 +362,30 @@ def test_sync_survives_a_paddle_outage(enabled, ledger, monkeypatch):
 
     # Must not raise, and must not downgrade a paying customer on an outage.
     assert billing.sync_subscription_status(ledger, "acct1", force=True) == "PRO"
+
+
+def test_sync_does_not_block_past_the_hard_timeout(enabled, ledger, monkeypatch):
+    """A wedged Paddle call (e.g. a stuck DNS lookup, which the SDK's own
+    per-request `timeout=` cannot bound — see the constant's docstring in
+    billing.py) must not be able to freeze a page render or a trading cycle.
+    ``sync_subscription_status`` has to give up and fall back to the ledger's
+    last-known plan within `_SYNC_HARD_TIMEOUT_SEC`, regardless of whether the
+    stalled call ever actually returns."""
+    ledger.set_paddle_customer_id("acct1", "ctm_abc")
+    ledger.set_plan_id("acct1", "PRO")
+    monkeypatch.setattr(billing, "_SYNC_HARD_TIMEOUT_SEC", 0.05)
+    stalled = _FakeSubscriptionsClient(subs=[], stall_seconds=2.0)
+    _patch_client(monkeypatch, _FakeClient(subscriptions=stalled))
+
+    import time as _time
+    started = _time.monotonic()
+    plan = billing.sync_subscription_status(ledger, "acct1", force=True)
+    elapsed = _time.monotonic() - started
+
+    assert plan == "PRO", "a stalled check must fall back to the last-known plan"
+    assert elapsed < 1.0, (
+        f"took {elapsed:.2f}s — the hard timeout (0.05s) did not bound the call"
+    )
 
 
 def test_sync_passes_the_active_and_trialing_states_to_paddle(enabled, ledger, monkeypatch):
