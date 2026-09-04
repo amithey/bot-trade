@@ -482,6 +482,40 @@ restarts.
 Streamlit is alive. Compose runs it every 30 s and restarts the
 container if it fails 3 times in a row.
 
+### Shipping an update
+
+Once the product is live, `main` is what's deployed — nobody commits to it
+directly. Day-to-day fixes and features land on `develop`:
+
+```bash
+git checkout develop
+git pull
+# ... make changes, commit, push to develop ...
+```
+
+`develop` has no branch protection, so it's fine to push straight to it
+mid-task. `main` does (GitHub requires the `pytest` check from
+`.github/workflows/tests.yml` to pass on it) — the only way changes reach
+`main`, and therefore production, is by merging `develop` into it once
+the batch of changes is something you'd actually want live:
+
+```bash
+git checkout main
+git pull
+git merge --no-ff develop
+git push origin main
+# then, when you're ready to actually ship it:
+fly deploy    # or your host's equivalent — see section 4
+```
+
+`--no-ff` keeps a merge commit marking exactly which changes went out in
+each release, rather than rewriting `develop`'s history onto `main`. A
+push to `develop` is *not* a deploy — it never reaches the running
+container until someone merges it to `main` and runs `fly deploy` (or
+redeploys via whichever host section 4 describes). This mirrors how a
+real product ships: work happens on an integration branch, and only a
+deliberate merge-and-deploy step touches what users are running.
+
 ---
 
 ## 6. Production checklist
