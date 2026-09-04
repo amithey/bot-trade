@@ -244,6 +244,10 @@ _LOGIN_CSS = """
                          font-family:var(--font-mono,'JetBrains Mono',monospace);
                          font-size:.62rem; letter-spacing:.14em;
                          text-transform:uppercase; }
+.bt-login-legal { margin-top:.9rem; text-align:center;
+                   font-size:.7rem; color:#4a6178; }
+.bt-login-legal a { color:#6a8aa8; text-decoration:none; }
+.bt-login-legal a:hover { text-decoration:underline; }
 </style>
 """
 
@@ -312,6 +316,21 @@ def require_login() -> None:
         st.markdown(
             '<div class="bt-login-status"><span class="dot"></span>'
             '<span class="txt">System online</span></div>',
+            unsafe_allow_html=True,
+        )
+        # Required by Paddle's domain-approval check: the domain a Checkout
+        # overlay opens from must itself link through to these documents.
+        # This is the only markup an unauthenticated visitor (including
+        # Paddle's approval crawler) ever sees on this domain — the
+        # matching footer on the Settings page (saas/billing.py's caller)
+        # is behind require_login() and st.stop() above, so it never
+        # reaches anyone who isn't already signed in.
+        st.markdown(
+            '<div class="bt-login-legal">'
+            '<a href="https://bottrade-ten.vercel.app/terms.html" target="_blank">Terms of Service</a> · '
+            '<a href="https://bottrade-ten.vercel.app/privacy.html" target="_blank">Privacy Policy</a> · '
+            '<a href="https://bottrade-ten.vercel.app/refunds.html" target="_blank">Refund Policy</a>'
+            '</div>',
             unsafe_allow_html=True,
         )
         st.markdown('</div></div>', unsafe_allow_html=True)
