@@ -60,6 +60,7 @@ that reaches the network.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import threading
 import time
 from typing import Optional
@@ -132,8 +133,28 @@ def purchasable_plans() -> list[str]:
 _HTTP_TIMEOUT_SEC = 8.0
 _MAX_RETRIES = 1
 
+#: `requests`' `timeout=` (and therefore `_HTTP_TIMEOUT_SEC` above) bounds the
+#: connect and read phases of a socket that already exists — it does *not*
+#: cover DNS resolution. `socket.getaddrinfo()` is a blocking libc call with
+#: its own OS-level resolver timeout/retry policy that Python does not let
+#: `requests`/`urllib3` interrupt, so a slow or wedged resolver for
+#: `*.paddle.com` can stall a call for minutes even though every timeout
+#: parameter on the request itself says single-digit seconds. That is exactly
+#: the "must fail fast" promise above being broken by something the SDK
+#: cannot see, so it is enforced again here from the outside: the whole
+#: Paddle call — DNS included — runs on a worker thread and is given a hard
+#: wall-clock budget. A worker that blows through it is simply abandoned
+#: (Python cannot kill a thread); it dies on its own once the OS-level
+#: resolver or connection eventually gives up. Comfortably above
+#: `_HTTP_TIMEOUT_SEC * (_MAX_RETRIES + 1)` so it never fires before the
+#: SDK's own timeout would have.
+_SYNC_HARD_TIMEOUT_SEC = 20.0
+
 _client_instance = None
 _client_lock = threading.Lock()
+_sync_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="paddle-sync",
+)
 
 
 def _client():
@@ -332,10 +353,20 @@ def sync_subscription_status(
         return current
 
     try:
-        subs = _client().subscriptions.list(ListSubscriptions(
-            customer_ids=[customer_id],
-            statuses=list(_ACTIVE_SUBSCRIPTION_STATES),
-        ))
+        future = _sync_executor.submit(
+            _client().subscriptions.list,
+            ListSubscriptions(
+                customer_ids=[customer_id],
+                statuses=list(_ACTIVE_SUBSCRIPTION_STATES),
+            ),
+        )
+        subs = future.result(timeout=_SYNC_HARD_TIMEOUT_SEC)
+    except concurrent.futures.TimeoutError:
+        logger.warning(f"[billing] subscription sync timed out for "
+                       f"{account_id} after {_SYNC_HARD_TIMEOUT_SEC}s — "
+                       f"treating as a Paddle outage")
+        _touch_cache(account_id, current)
+        return current
     except ApiError as exc:                                    # noqa: BLE001
         logger.warning(f"[billing] subscription sync failed for "
                        f"{account_id}: {exc}")
