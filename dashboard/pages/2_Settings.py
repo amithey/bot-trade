@@ -533,3 +533,14 @@ with tcol2:
 with tcol3:
     if st.button("Test toast", use_container_width=True):
         st.toast("BotTrade test toast 🔔", icon="🔔")
+
+# ── Footer — required by Paddle's domain-approval check: the domain a
+# checkout overlay opens from must itself link through to these three
+# documents. The documents live on the marketing site (landing/), not here —
+# this dashboard is a Streamlit app, not a place to host legal copy.
+st.markdown("---")
+st.caption(
+    "[Terms of Service](https://bottrade-ten.vercel.app/terms.html) · "
+    "[Privacy Policy](https://bottrade-ten.vercel.app/privacy.html) · "
+    "[Refund Policy](https://bottrade-ten.vercel.app/refunds.html)"
+)
