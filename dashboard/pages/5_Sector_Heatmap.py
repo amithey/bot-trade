@@ -22,7 +22,7 @@ if str(_ROOT) not in _sys.path:
 # ────────────────────────────────────────────────────────────────────────────
 
 from dashboard._shared import (
-    BORDER, C_BUY, C_HOLD, C_SELL, CYAN, TEXT, TEXT_DIM,
+    C_BUY, C_SELL, TEXT, TEXT_DIM,
     secure_page, ensure_profile_in_session,
 )
 

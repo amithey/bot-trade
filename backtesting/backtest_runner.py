@@ -61,15 +61,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 
-from config.settings import settings
 from decision_engine.ai_engine import AITradingEngine, TradingDecision
-from market_data.fetcher import MACDParams, MarketDataFetcher, MarketSnapshot
+from market_data.fetcher import MarketDataFetcher, MarketSnapshot
 from rag.retriever import RetrievalResult, StrategyRetriever
 from utils.logger import get_logger
 
@@ -437,7 +435,6 @@ class BacktestRunner:
                     exec_price = float(sim_df.loc[sim_ts, "Close"])
 
                 current_close = float(sim_df.loc[sim_ts, "Close"])
-                current_value = position.portfolio_value(current_close)
 
                 # ---- Build a point-in-time MarketSnapshot ---- #
                 data_slice = full_df.loc[:sim_ts]
@@ -738,12 +735,10 @@ def _render_backtest_report(result: "BacktestResult") -> None:
     3. AI engine quality metrics (fallback rate, RAG quality distribution).
     """
     from rich import box
-    from rich.columns import Columns
     from rich.console import Console
     from rich.panel import Panel
     from rich.rule import Rule
     from rich.table import Table
-    from rich.text import Text
 
     console = Console()
 
@@ -905,88 +900,3 @@ def _render_backtest_report(result: "BacktestResult") -> None:
     ))
 
     console.print()
-
-
-# ---------------------------------------------------------------------------
-# __main__ — integration smoke-test
-# ---------------------------------------------------------------------------
-
-
-if __name__ == "__main__":
-    import os
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.rule import Rule
-
-    console = Console()
-    console.print(Rule("[bold yellow]Phase 5 — Backtesting Engine Test[/bold yellow]"))
-
-    # ------------------------------------------------------------------ #
-    # Check for API key before initialising the engine
-    # ------------------------------------------------------------------ #
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    has_api_key = bool(api_key) and api_key.startswith("sk-ant-")
-
-    if not has_api_key:
-        console.print(
-            Panel(
-                "[yellow]ANTHROPIC_API_KEY not found in environment.[/yellow]\n\n"
-                "The BacktestRunner requires a live Anthropic API key because it\n"
-                "calls the AI Decision Engine on every simulation bar.\n\n"
-                "Set your key and re-run:\n"
-                "  [bold cyan]export ANTHROPIC_API_KEY=sk-ant-...[/bold cyan]\n"
-                "  [bold cyan]python -m backtesting.backtest_runner[/bold cyan]\n\n"
-                "[dim]Note: A 30-day backtest makes ~30 API calls.\n"
-                "With prompt caching the cost is minimal.[/dim]",
-                title="[yellow]API Key Required[/yellow]",
-                expand=False,
-            )
-        )
-        import sys
-        sys.exit(0)
-
-    # ------------------------------------------------------------------ #
-    # Initialise the three pipeline dependencies
-    # ------------------------------------------------------------------ #
-    console.print("[dim]Initialising pipeline components…[/dim]")
-
-    fetcher   = MarketDataFetcher()
-    retriever = StrategyRetriever()
-    engine    = AITradingEngine()
-
-    runner = BacktestRunner(
-        fetcher=fetcher,
-        retriever=retriever,
-        engine=engine,
-        rag_top_k=3,
-        min_confidence=0.55,
-        inter_call_delay=1.0,   # 1 s between API calls
-        fees=0.001,
-        slippage=0.001,
-    )
-
-    # ------------------------------------------------------------------ #
-    # Run a short 30-trading-day backtest on QQQ
-    # ------------------------------------------------------------------ #
-    from datetime import date, timedelta
-
-    end   = date.today() - timedelta(days=1)          # yesterday (markets may be open today)
-    start = end - timedelta(days=60)                  # ~30 trading days in ~60 calendar days
-
-    console.print(
-        f"Running backtest: [bold cyan]QQQ[/bold cyan] | "
-        f"{start} → {end} | "
-        f"Initial capital: $10,000"
-    )
-
-    try:
-        result = runner.run(
-            ticker="QQQ",
-            start_date=start,
-            end_date=end,
-            initial_capital=10_000.0,
-        )
-        result.print_summary()
-
-    except (ValueError, RuntimeError) as exc:
-        console.print(f"[bold red]Backtest failed:[/bold red] {exc}")

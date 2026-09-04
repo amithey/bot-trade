@@ -18,7 +18,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from dashboard._shared import (
-    BORDER, C_BUY, C_SELL, CYAN, DEFAULT_TICKERS, GRID, TEXT, TEXT_DIM,
+    C_BUY, C_SELL, CYAN, DEFAULT_TICKERS, GRID, TEXT, TEXT_DIM,
     TEXT_HI, secure_page,
 )
 

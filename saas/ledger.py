@@ -173,41 +173,6 @@ class UsageLedger:
             ).fetchone()
         return row["plan_id"] if row else "FREE"
 
-    def get_stripe_customer_id(self, account_id: str) -> Optional[str]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT stripe_customer_id FROM accounts WHERE account_id = ?",
-                (account_id,),
-            ).fetchone()
-        return row["stripe_customer_id"] if row else None
-
-    def set_stripe_customer_id(self, account_id: str, customer_id: str) -> None:
-        self.ensure_account(account_id)
-        with self._lock:
-            self._conn.execute(
-                "UPDATE accounts SET stripe_customer_id = ?, updated_at = ? "
-                "WHERE account_id = ?",
-                (customer_id, _now().isoformat(), account_id),
-            )
-            self._conn.commit()
-
-    def get_stripe_subscription_id(self, account_id: str) -> Optional[str]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT stripe_subscription_id FROM accounts WHERE account_id = ?",
-                (account_id,),
-            ).fetchone()
-        return row["stripe_subscription_id"] if row else None
-
-    def account_id_for_stripe_customer(self, customer_id: str) -> Optional[str]:
-        """Reverse lookup — the account a given Stripe customer belongs to."""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT account_id FROM accounts WHERE stripe_customer_id = ?",
-                (customer_id,),
-            ).fetchone()
-        return row["account_id"] if row else None
-
     def get_paddle_customer_id(self, account_id: str) -> Optional[str]:
         with self._lock:
             row = self._conn.execute(
@@ -244,7 +209,6 @@ class UsageLedger:
         return row["account_id"] if row else None
 
     def set_plan_id(self, account_id: str, plan_id: str,
-                    stripe_subscription_id: Optional[str] = None,
                     paddle_subscription_id: Optional[str] = None) -> None:
         self.ensure_account(account_id, plan_id)
         with self._lock:
@@ -254,16 +218,6 @@ class UsageLedger:
                     "paddle_subscription_id = ?, updated_at = ? "
                     "WHERE account_id = ?",
                     (plan_id, paddle_subscription_id, _now().isoformat(),
-                     account_id),
-                )
-                self._conn.commit()
-                return
-            if stripe_subscription_id is not None:
-                self._conn.execute(
-                    "UPDATE accounts SET plan_id = ?, "
-                    "stripe_subscription_id = ?, updated_at = ? "
-                    "WHERE account_id = ?",
-                    (plan_id, stripe_subscription_id, _now().isoformat(),
                      account_id),
                 )
                 self._conn.commit()

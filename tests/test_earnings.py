@@ -18,7 +18,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
-import pytest
 
 import market_data.earnings as earnings_mod
 from market_data.earnings import EarningsCalendar, EarningsInfo

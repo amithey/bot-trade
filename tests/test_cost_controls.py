@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
 
 from portfolio.virtual_account import LivePortfolio
 from trading.live_engine import LiveTradingEngine

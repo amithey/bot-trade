@@ -6,7 +6,7 @@ disk in plain text — same as ``.env`` already is. Don't commit them.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 _DEFAULT_PATH = Path("data/notifications.json")

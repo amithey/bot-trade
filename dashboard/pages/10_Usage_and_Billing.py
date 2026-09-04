@@ -22,8 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard._shared import (
-    AMBER, BG_PANEL, BORDER, C_BUY, CYAN, GRID, TEXT, TEXT_DIM,
-    secure_page, ensure_profile_in_session, get_tenant,
+    BG_PANEL, CYAN, GRID, TEXT, secure_page, ensure_profile_in_session, get_tenant,
 )
 from decision_engine.decision_cache import get_decision_cache
 from saas.ledger import get_ledger

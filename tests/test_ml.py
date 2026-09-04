@@ -24,7 +24,7 @@ from ml.anomaly import AnomalyDetector, AnomalyResult
 from ml.regime import RegimeClassifier, RegimeResult
 from ml.forecaster import forecast, ForecastResult
 from ml.pattern_detector import detect_patterns, _rel_diff, _peaks_troughs
-from ml.trade_journal_ml import TradeJournalML, WinProbability
+from ml.trade_journal_ml import TradeJournalML
 from portfolio.virtual_account import TradeRecord
 
 

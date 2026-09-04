@@ -6,7 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
-import numpy as np
 import pandas as pd
 
 from utils.logger import get_logger

@@ -26,7 +26,6 @@ import logging
 import sys
 import threading
 import traceback
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Callable, Optional

@@ -17,7 +17,6 @@ raises into the caller.
 """
 from __future__ import annotations
 
-import threading
 from types import SimpleNamespace
 
 import pytest

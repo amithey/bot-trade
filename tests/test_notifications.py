@@ -17,13 +17,11 @@ urlopen` is monkeypatched so nothing ever leaves the process.
 from __future__ import annotations
 
 import json
-import queue
 import time
 import urllib.parse
 
 import pytest
 
-from notifications import config as config_mod
 from notifications import dispatcher as dispatcher_mod
 from notifications.config import NotificationConfig
 from notifications.dispatcher import NotificationDispatcher, drain_toast_queue

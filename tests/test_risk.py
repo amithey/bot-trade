@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from risk.safety import SafetyConfig, SafetyController, SafetyStatus
+from risk.safety import SafetyConfig, SafetyController
 from risk.slippage import SlippageConfig, apply_slippage
 
 
