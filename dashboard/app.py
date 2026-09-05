@@ -28,6 +28,14 @@ if str(_PROJECT_ROOT) not in _sys.path:
 
 import streamlit as st
 
+# Started here because this router is the one file every session runs, and
+# install() is idempotent. It logs nothing unless the process is actually
+# denied the CPU — see the module docstring for the production failure it
+# was added to identify.
+from utils import stall_watchdog as _stall_watchdog
+
+_stall_watchdog.install()
+
 # Paths are relative to this entrypoint file, per st.Page's own contract.
 # Icons and titles are carried over from each page's existing
 # st.set_page_config call rather than invented fresh, so the browser-tab

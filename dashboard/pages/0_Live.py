@@ -338,12 +338,12 @@ c_start, c_reset, c_spacer = st.columns([1.1, 1.1, 6.8], gap="small")
 
 with c_start:
     if engine.is_running():
-        if st.button("STOP", use_container_width=True,
+        if st.button("STOP", width="stretch",
                      help="Halt the live loop"):
             engine.stop()
             st.rerun()
     else:
-        if st.button("START", use_container_width=True, type="primary",
+        if st.button("START", width="stretch", type="primary",
                      help="Begin live trading loop"):
             engine.set_config(
                 ticker=ticker,
@@ -356,7 +356,7 @@ with c_start:
             st.rerun()
 
 with c_reset:
-    if st.button("RESET", use_container_width=True, help="Reset portfolio"):
+    if st.button("RESET", width="stretch", help="Reset portfolio"):
         from portfolio.virtual_account import LivePortfolio
         from trading.registry import get_registry
         # Stop and drop the engine first: it holds a reference to the old
@@ -630,7 +630,7 @@ if True:
         for ann in fig.layout.annotations:
             ann.font.size = 10
             ann.font.color = TEXT_DIM
-        st.plotly_chart(fig, use_container_width=True, key="main_chart")
+        st.plotly_chart(fig, width="stretch", key="main_chart")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  BOTTOM TABS — Decision · Positions · Trades · Events
@@ -963,7 +963,7 @@ with tab_eq:
                        range=[ymin - pad, ymax + pad],
                        tickprefix="$", tickformat=",.0f"),
         )
-        st.plotly_chart(eq_fig, use_container_width=True, key="equity_chart")
+        st.plotly_chart(eq_fig, width="stretch", key="equity_chart")
         peak = max(eq_val)
         dd = (eq_val[-1] / peak - 1) * 100 if peak else 0.0
         st.caption(f"{len(eq_val)} samples · peak ${peak:,.2f} · "
@@ -982,7 +982,7 @@ with tab_pos:
                 "P&L":    f'${pnl:+,.2f}',
             })
         st.dataframe(pd.DataFrame(rows), hide_index=True,
-                     use_container_width=True, height=240)
+                     width="stretch", height=240)
     else:
         st.caption("No open positions.")
 
@@ -999,7 +999,7 @@ with tab_tr:
                 "Reason": (t.reasoning or "")[:120],
             })
         df_tr = pd.DataFrame(list(reversed(rows)))
-        st.dataframe(df_tr, hide_index=True, use_container_width=True,
+        st.dataframe(df_tr, hide_index=True, width="stretch",
                      height=360)
         st.download_button(
             "⬇ Export CSV",

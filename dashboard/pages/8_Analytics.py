@@ -235,7 +235,7 @@ fig_eq.update_layout(
     legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=TEXT)),
     hovermode="x unified",
 )
-st.plotly_chart(fig_eq, use_container_width=True)
+st.plotly_chart(fig_eq, width="stretch")
 
 
 # ─── Drawdown + per-trade scatter ─────────────────────────────────────────
@@ -260,7 +260,7 @@ with c_dd:
         yaxis=dict(gridcolor=GRID, color=TEXT_DIM, ticksuffix="%"),
         showlegend=False,
     )
-    st.plotly_chart(fig_dd, use_container_width=True)
+    st.plotly_chart(fig_dd, width="stretch")
 
 with c_scatter:
     st.markdown('<div class="bt-section-title">ROUND-TRIP P&L</div>',
@@ -290,7 +290,7 @@ with c_scatter:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$",
                        title="Realised P&L"),
         )
-        st.plotly_chart(fig_sc, use_container_width=True)
+        st.plotly_chart(fig_sc, width="stretch")
     else:
         st.caption("No completed round trips yet.")
 
@@ -326,7 +326,7 @@ with c_tk:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$"),
             showlegend=False,
         )
-        st.plotly_chart(fig_tk, use_container_width=True)
+        st.plotly_chart(fig_tk, width="stretch")
     else:
         st.caption("(empty)")
 
@@ -348,7 +348,7 @@ with c_wd:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$"),
             showlegend=False,
         )
-        st.plotly_chart(fig_wd, use_container_width=True)
+        st.plotly_chart(fig_wd, width="stretch")
     else:
         st.caption("(empty)")
 
@@ -370,7 +370,7 @@ with c_hr:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$"),
             showlegend=False,
         )
-        st.plotly_chart(fig_hr, use_container_width=True)
+        st.plotly_chart(fig_hr, width="stretch")
     else:
         st.caption("(empty)")
 
@@ -405,7 +405,7 @@ with c_conc:
             showlegend=False,
             font=dict(color=TEXT),
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie, width="stretch")
     else:
         st.caption("No open positions.")
 
@@ -427,7 +427,7 @@ with c_corr:
             xaxis=dict(color=TEXT_DIM),
             yaxis=dict(color=TEXT_DIM, autorange="reversed"),
         )
-        st.plotly_chart(fig_h, use_container_width=True)
+        st.plotly_chart(fig_h, width="stretch")
     else:
         st.caption("Need ≥ 2 open positions with overlapping price history.")
 
@@ -439,7 +439,7 @@ with st.expander("📐 Full metrics table"):
         "Metric": list(md.keys()),
         "Value": list(md.values()),
     })
-    st.dataframe(df_md, use_container_width=True, hide_index=True)
+    st.dataframe(df_md, width="stretch", hide_index=True)
 
 
 # ─── Round-trip log ───────────────────────────────────────────────────────
@@ -448,6 +448,6 @@ with st.expander(f"📒 Round-trip log ({len(durations)} trips)"):
         view = durations.copy()
         view["entry_at"] = view["entry_at"].dt.strftime("%Y-%m-%d %H:%M")
         view["exit_at"] = view["exit_at"].dt.strftime("%Y-%m-%d %H:%M")
-        st.dataframe(view, use_container_width=True, hide_index=True)
+        st.dataframe(view, width="stretch", hide_index=True)
     else:
         st.caption("No round trips yet.")

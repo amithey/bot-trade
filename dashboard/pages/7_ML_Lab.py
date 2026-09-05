@@ -52,7 +52,7 @@ with c_sym:
                           key="ml_ticker")
 with c_run:
     st.markdown("<br>", unsafe_allow_html=True)
-    run = st.button("Analyze", use_container_width=True, type="primary")
+    run = st.button("Analyze", width="stretch", type="primary")
 with c_info:
     st.caption(f"Models persist under `data/ml_models/` · "
                f"Rendered {datetime.now().strftime('%H:%M:%S')}")
@@ -274,7 +274,7 @@ with right:
             yaxis=dict(gridcolor="#1a202c", zeroline=False),
             showlegend=False,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     except Exception as exc:
         st.caption(f"(chart unavailable: {exc})")
 
@@ -300,7 +300,7 @@ with jcol1:
 with jcol2:
     st.metric("Confidence band", win.confidence_band)
 with jcol3:
-    retrain = st.button("Retrain now", use_container_width=True)
+    retrain = st.button("Retrain now", width="stretch")
 
 if retrain:
     from portfolio.virtual_account import LivePortfolio

@@ -47,11 +47,25 @@ USER bottrade
 EXPOSE 8501
 
 # Streamlit-specific runtime tuning
+#
+# `enableCORS=false` used to be set here and is deliberately gone: Streamlit
+# refuses that combination with XSRF protection on and overrides it back to
+# true anyway, printing a warning on every single boot. It was never in
+# effect — only misleading.
+#
+# The file watcher is off because nothing in a built image can change. Left
+# on (config.toml sets fileWatcherType="auto" and runOnSave=true for local
+# development, and env vars override that here) it runs a watchdog observer
+# over the source tree for the life of the container, and any event it does
+# see triggers a full app rerun. That is development ergonomics being paid
+# for 24/7 on a shared vCPU that the live trading loop and the dashboard are
+# already competing over.
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
     STREAMLIT_SERVER_PORT=8501 \
     STREAMLIT_SERVER_HEADLESS=true \
-    STREAMLIT_SERVER_ENABLE_CORS=false \
     STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true \
+    STREAMLIT_SERVER_FILE_WATCHER_TYPE=none \
+    STREAMLIT_SERVER_RUN_ON_SAVE=false \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
 # Healthcheck — Streamlit exposes a 200 on /healthz

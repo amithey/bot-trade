@@ -155,7 +155,7 @@ if grid:
         yaxis=dict(title="exit margin (net bear votes)"),
     )
     c_heat, c_top = st.columns([1.4, 1], gap="small")
-    c_heat.plotly_chart(heat, use_container_width=True)
+    c_heat.plotly_chart(heat, width="stretch")
     with c_top:
         top_rows = [{
             "Enter": f"+{c.enter_votes}", "Exit": f"−{c.exit_votes}",
@@ -165,7 +165,7 @@ if grid:
             "Fitness": c.fitness,
         } for c in grid[:8]]
         st.dataframe(pd.DataFrame(top_rows), hide_index=True,
-                     use_container_width=True, height=290)
+                     width="stretch", height=290)
 
 res = st.session_state.get("_committee_result")
 if res is None:
@@ -285,7 +285,7 @@ fig.update_layout(
 for ann in fig.layout.annotations:
     ann.font.size = 10
     ann.font.color = TEXT_DIM
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 # ── Trades table ────────────────────────────────────────────────────────────
 closed = [t for t in res.trades if t.exit_time is not None]
@@ -305,7 +305,7 @@ with st.expander(f"Trade log — {len(res.trades)} trades "
                         if t.pnl_pct is not None else "—"),
         } for t in reversed(res.trades)]
         st.dataframe(pd.DataFrame(rows), hide_index=True,
-                     use_container_width=True, height=320)
+                     width="stretch", height=320)
     else:
         st.caption("The committee never reached an entry majority in this "
                    "window. Lower the ENTER MARGIN and try again.")
