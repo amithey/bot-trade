@@ -108,12 +108,27 @@ if engine is None:
 
 pump_events()
 
-# 2-second refresh gives a "live heartbeat" feel without overloading Claude
-# (the AI cycle itself is throttled by the engine's own interval setting).
-if engine.is_running():
-    st_autorefresh(interval=2_000, limit=None, key="live_refresh")
-
 state = engine.snapshot()
+
+# Refresh rate is derived from the engine's own cycle rather than fixed.
+#
+# This used to be a flat 2s, chosen for a "live heartbeat" feel and reasoned
+# about purely in terms of API cost (the AI cycle is throttled separately, so
+# a fast UI tick costs no Claude calls). What that missed is the CPU: every
+# tick re-runs this entire script — rebuilding the four-pane Plotly figure and
+# re-reading plan, entitlement and usage from the ledger — and plans cap the
+# cycle at 300s (Free), 60s (Pro) and 30s (Desk). At 2s that is 15-150 full
+# re-renders per actual change, forever, on a shared vCPU the live trading
+# loop is already competing for.
+#
+# Roughly ten refreshes per cycle keeps the countdown to the next cycle
+# visibly moving while cutting the idle load by most of that factor. The
+# floor keeps it feeling live on the fastest plan; the ceiling keeps a 5
+# minute Free-plan cycle from looking frozen.
+if engine.is_running():
+    _refresh_ms = max(5_000, min(int(state["interval_sec"]) * 100, 15_000))
+    st_autorefresh(interval=_refresh_ms, limit=None, key="live_refresh")
+
 port  = st.session_state["portfolio"]
 
 _tenant_state = state.get("tenant") or {}
