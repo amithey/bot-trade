@@ -20,18 +20,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tini \
     && rm -rf /var/lib/apt/lists/*
 
+# HF_HOME is pinned to a fixed path so the build and the running container
+# agree on where the embedding model lives. Without it the cache defaults to
+# $HOME/.cache, which is neither baked into the image nor on the mounted
+# volume — see the model-baking step below for why that mattered.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
-    TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
+    HF_HOME=/opt/hf \
+    SENTENCE_TRANSFORMERS_HOME=/opt/hf
 
 WORKDIR /app
 
 # --- Python deps (cached layer) ---
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+
+# --- Embedding model (cached layer) ---
+# Baked in rather than fetched at runtime. Measured on the deployed machine:
+# nothing was cached under the app user's home, nothing on the mounted volume,
+# and no HF_HOME pointed anywhere persistent — so the first RAG query after
+# *every* deploy or restart downloaded ~90 MB from HuggingFace and initialised
+# torch, inside the same single-vCPU process that has to answer Fly's health
+# check within 5 seconds. That is a network round trip and a heavy load on the
+# critical path, repeated after every restart, for a file that never changes.
+#
+# Constructed exactly the way rag/retriever.py does it, so the cache layout
+# the build produces is the one the runtime looks for. The model name is
+# settings.embedding_model's default; overriding that env var to a model that
+# is not baked in falls back to downloading at runtime, as before.
+RUN python -c "from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction; SentenceTransformerEmbeddingFunction(model_name='all-MiniLM-L6-v2')"
 
 # --- App code ---
 COPY . /app
@@ -41,7 +62,7 @@ COPY . /app
 RUN chmod +x /app/docker/entrypoint.sh \
     && useradd -ms /bin/bash --uid 1000 bottrade \
     && mkdir -p /app/data /app/logs \
-    && chown -R bottrade:bottrade /app
+    && chown -R bottrade:bottrade /app /opt/hf
 USER bottrade
 
 EXPOSE 8501
