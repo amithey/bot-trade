@@ -298,12 +298,12 @@ def require_login() -> None:
                     st.button(
                         _PROVIDER_LABELS.get(name, f"Continue with {name.title()}"),
                         key=f"_bt_login_{name}",
-                        use_container_width=True, type="primary",
+                        width="stretch", type="primary",
                         on_click=st.login, args=(name,),
                     )
             else:
                 st.button("Sign in", key="_bt_login",
-                          use_container_width=True, type="primary",
+                          width="stretch", type="primary",
                           on_click=st.login)
         except Exception as exc:                               # noqa: BLE001
             # Almost always a missing Authlib or a malformed [auth] block —
@@ -347,7 +347,7 @@ def render_account_chip() -> None:
         st.markdown("---")
         if mode == "oidc" and is_logged_in():
             st.caption(f"Signed in as **{display_name()}**")
-            if st.button("Sign out", use_container_width=True,
+            if st.button("Sign out", width="stretch",
                          key="_bt_signout"):
                 forget_identity()
                 st.logout()
@@ -362,7 +362,7 @@ def render_account_chip() -> None:
                     ":orange[Legacy SHA-256 password hash — regenerate with "
                     "`python -m dashboard._auth`.]"
                 )
-            if st.button("Log out", use_container_width=True,
+            if st.button("Log out", width="stretch",
                          key="_bt_pw_logout"):
                 forget_identity()
                 logout()

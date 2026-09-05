@@ -66,7 +66,7 @@ with col_b:
     )
 with col_c:
     st.markdown("<br>", unsafe_allow_html=True)
-    run = st.button("Run Research", type="primary", use_container_width=True)
+    run = st.button("Run Research", type="primary", width="stretch")
 
 st.markdown("---")
 

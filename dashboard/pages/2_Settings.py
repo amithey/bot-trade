@@ -112,8 +112,8 @@ with kc1:
 with kc2:
     st.markdown('<div style="height:1.85rem"></div>', unsafe_allow_html=True)
     b1, b2 = st.columns(2)
-    save_key = b1.button("Save", use_container_width=True, type="primary")
-    clear_key = b2.button("Remove", use_container_width=True,
+    save_key = b1.button("Save", width="stretch", type="primary")
+    clear_key = b2.button("Remove", width="stretch",
                           disabled=not current)
 
 if save_key:
@@ -239,7 +239,7 @@ if billing.billing_enabled():
                     """, height=56)
                 else:
                     st.button(f"Upgrade to {plan.name}", disabled=True,
-                             use_container_width=True,
+                             width="stretch",
                              help="Checkout is temporarily unavailable — try again shortly.")
 
         if _has_customer:
@@ -249,7 +249,7 @@ if billing.billing_enabled():
                 portal_url = billing.create_portal_session(_ledger, _billing_account)
                 if portal_url:
                     st.link_button("Open billing portal", portal_url,
-                                  use_container_width=True)
+                                  width="stretch")
     else:
         st.caption("You're on the highest available plan.")
 
@@ -396,7 +396,7 @@ with col_a:
 with col_b:
     new_tk = st.text_input("Add ticker", placeholder="e.g. SOL-USD",
                            key="new_ticker_input").upper().strip()
-    if st.button("Add", use_container_width=True) and new_tk:
+    if st.button("Add", width="stretch") and new_tk:
         ok, msg = validate_ticker_symbol(new_tk)
         if not ok:
             st.error(f"Cannot add {new_tk}: {msg}")
@@ -409,7 +409,7 @@ with col_b:
         else:
             st.warning(f"{new_tk} is already on the list.")
 
-    if st.button("Reset to defaults", use_container_width=True):
+    if st.button("Reset to defaults", width="stretch"):
         st.session_state["watchlist"] = list(DEFAULT_TICKERS)
         save_profile()
         st.rerun()
@@ -521,17 +521,17 @@ if new_cfg.to_dict() != _ncfg.to_dict():
 # Test buttons
 tcol1, tcol2, tcol3 = st.columns([1, 1, 3])
 with tcol1:
-    if st.button("Test Telegram", use_container_width=True,
+    if st.button("Test Telegram", width="stretch",
                  disabled=not (tg_on and tg_token and tg_chat)):
         ok, msg = NotificationDispatcher(new_cfg).test_telegram()
         (st.success if ok else st.error)(msg)
 with tcol2:
-    if st.button("Test Webhook", use_container_width=True,
+    if st.button("Test Webhook", width="stretch",
                  disabled=not (wh_on and wh_url)):
         ok, msg = NotificationDispatcher(new_cfg).test_webhook()
         (st.success if ok else st.error)(msg)
 with tcol3:
-    if st.button("Test toast", use_container_width=True):
+    if st.button("Test toast", width="stretch"):
         st.toast("BotTrade test toast 🔔", icon="🔔")
 
 # ── Footer — required by Paddle's domain-approval check: the domain a

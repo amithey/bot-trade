@@ -212,7 +212,7 @@ def require_auth() -> None:
             pw = st.text_input("Password", type="password",
                                label_visibility="collapsed",
                                placeholder="Password")
-            submit = st.form_submit_button("UNLOCK", use_container_width=True,
+            submit = st.form_submit_button("UNLOCK", width="stretch",
                                            type="primary")
         if submit:
             if verify_password(pw):
@@ -241,7 +241,7 @@ def render_logout_button() -> None:
         return
     with st.sidebar:
         st.markdown("---")
-        if st.button("Log out", use_container_width=True, key="_bt_logout"):
+        if st.button("Log out", width="stretch", key="_bt_logout"):
             logout()
             st.rerun()
 

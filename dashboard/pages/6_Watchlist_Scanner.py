@@ -137,7 +137,7 @@ def _scan(tickers: tuple[str, ...]) -> list[dict]:
 # ─── Controls ─────────────────────────────────────────────────────────────────
 c_scan, c_filter, c_info = st.columns([1, 2, 3])
 with c_scan:
-    if st.button("Re-scan", use_container_width=True):
+    if st.button("Re-scan", width="stretch"):
         _scan.clear()
         st.rerun()
 with c_filter:

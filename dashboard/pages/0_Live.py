@@ -108,12 +108,27 @@ if engine is None:
 
 pump_events()
 
-# 2-second refresh gives a "live heartbeat" feel without overloading Claude
-# (the AI cycle itself is throttled by the engine's own interval setting).
-if engine.is_running():
-    st_autorefresh(interval=2_000, limit=None, key="live_refresh")
-
 state = engine.snapshot()
+
+# Refresh rate is derived from the engine's own cycle rather than fixed.
+#
+# This used to be a flat 2s, chosen for a "live heartbeat" feel and reasoned
+# about purely in terms of API cost (the AI cycle is throttled separately, so
+# a fast UI tick costs no Claude calls). What that missed is the CPU: every
+# tick re-runs this entire script — rebuilding the four-pane Plotly figure and
+# re-reading plan, entitlement and usage from the ledger — and plans cap the
+# cycle at 300s (Free), 60s (Pro) and 30s (Desk). At 2s that is 15-150 full
+# re-renders per actual change, forever, on a shared vCPU the live trading
+# loop is already competing for.
+#
+# Roughly ten refreshes per cycle keeps the countdown to the next cycle
+# visibly moving while cutting the idle load by most of that factor. The
+# floor keeps it feeling live on the fastest plan; the ceiling keeps a 5
+# minute Free-plan cycle from looking frozen.
+if engine.is_running():
+    _refresh_ms = max(5_000, min(int(state["interval_sec"]) * 100, 15_000))
+    st_autorefresh(interval=_refresh_ms, limit=None, key="live_refresh")
+
 port  = st.session_state["portfolio"]
 
 _tenant_state = state.get("tenant") or {}
@@ -338,12 +353,12 @@ c_start, c_reset, c_spacer = st.columns([1.1, 1.1, 6.8], gap="small")
 
 with c_start:
     if engine.is_running():
-        if st.button("STOP", use_container_width=True,
+        if st.button("STOP", width="stretch",
                      help="Halt the live loop"):
             engine.stop()
             st.rerun()
     else:
-        if st.button("START", use_container_width=True, type="primary",
+        if st.button("START", width="stretch", type="primary",
                      help="Begin live trading loop"):
             engine.set_config(
                 ticker=ticker,
@@ -356,7 +371,7 @@ with c_start:
             st.rerun()
 
 with c_reset:
-    if st.button("RESET", use_container_width=True, help="Reset portfolio"):
+    if st.button("RESET", width="stretch", help="Reset portfolio"):
         from portfolio.virtual_account import LivePortfolio
         from trading.registry import get_registry
         # Stop and drop the engine first: it holds a reference to the old
@@ -630,7 +645,7 @@ if True:
         for ann in fig.layout.annotations:
             ann.font.size = 10
             ann.font.color = TEXT_DIM
-        st.plotly_chart(fig, use_container_width=True, key="main_chart")
+        st.plotly_chart(fig, width="stretch", key="main_chart")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  BOTTOM TABS — Decision · Positions · Trades · Events
@@ -963,7 +978,7 @@ with tab_eq:
                        range=[ymin - pad, ymax + pad],
                        tickprefix="$", tickformat=",.0f"),
         )
-        st.plotly_chart(eq_fig, use_container_width=True, key="equity_chart")
+        st.plotly_chart(eq_fig, width="stretch", key="equity_chart")
         peak = max(eq_val)
         dd = (eq_val[-1] / peak - 1) * 100 if peak else 0.0
         st.caption(f"{len(eq_val)} samples · peak ${peak:,.2f} · "
@@ -982,7 +997,7 @@ with tab_pos:
                 "P&L":    f'${pnl:+,.2f}',
             })
         st.dataframe(pd.DataFrame(rows), hide_index=True,
-                     use_container_width=True, height=240)
+                     width="stretch", height=240)
     else:
         st.caption("No open positions.")
 
@@ -999,7 +1014,7 @@ with tab_tr:
                 "Reason": (t.reasoning or "")[:120],
             })
         df_tr = pd.DataFrame(list(reversed(rows)))
-        st.dataframe(df_tr, hide_index=True, use_container_width=True,
+        st.dataframe(df_tr, hide_index=True, width="stretch",
                      height=360)
         st.download_button(
             "⬇ Export CSV",

@@ -99,7 +99,7 @@ def _load_snapshot(symbols: tuple[str, ...]) -> pd.DataFrame:
 # ─── Control ─────────────────────────────────────────────────────────────────
 c_refresh, c_info = st.columns([1, 5])
 with c_refresh:
-    if st.button("Refresh", use_container_width=True, help="Force reload (clears 5-min cache)"):
+    if st.button("Refresh", width="stretch", help="Force reload (clears 5-min cache)"):
         _load_snapshot.clear()
         st.rerun()
 with c_info:

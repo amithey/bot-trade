@@ -71,7 +71,7 @@ url = col_url.text_input(
     label_visibility="collapsed",
     key="yt_url_input",
 )
-go_btn = col_btn.button("Ingest", use_container_width=True)
+go_btn = col_btn.button("Ingest", width="stretch")
 
 if go_btn and url.strip():
     clean_url = url.strip()
@@ -125,7 +125,7 @@ art_urls_raw = art_col.text_area(
     height=80,
     key="article_urls_input",
 )
-art_go = art_btn_col.button("Ingest Articles", use_container_width=True)
+art_go = art_btn_col.button("Ingest Articles", width="stretch")
 
 if art_go and art_urls_raw.strip():
     art_urls = [u.strip() for u in art_urls_raw.splitlines() if u.strip()]
@@ -176,7 +176,7 @@ st.markdown("##### Written Playbooks (Seeded Strategies)")
 st.caption("Built-in textual knowledge: RSI, MACD, candlesticks, S/R, "
            "fundamentals, day-trading rules. Idempotent — safe to re-run.")
 
-if st.button("Re-run Seed Ingestion", use_container_width=False):
+if st.button("Re-run Seed Ingestion", width="content"):
     with st.status("Re-seeding…", expanded=True) as s:
         try:
             proc = subprocess.run(

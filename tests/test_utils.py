@@ -378,3 +378,88 @@ def test_log_trade_execution_passes_through_all_fields():
     assert args[1] == "BUY"
     assert args[2] == "AAPL"
     assert args[3] == pytest.approx(101.234)
+
+
+# --------------------------------------------------------------------------- #
+# stall_watchdog.py
+# --------------------------------------------------------------------------- #
+class _StopWatchLoop(Exception):
+    """Sentinel used to break the watchdog's infinite loop in tests."""
+
+
+class _FakeClock:
+    """Stand-in for the `time` module with a clock the test drives.
+
+    `sleep` advances both clocks by the requested amount plus `overshoot`,
+    which is how a stall is simulated without any test actually sleeping.
+    The second sleep raises, so `_watch()` runs exactly one iteration.
+    """
+
+    def __init__(self, overshoot: float):
+        self.mono = 0.0
+        self.wall = 1_000.0
+        self._overshoot = overshoot
+        self.sleeps = 0
+
+    def monotonic(self) -> float:
+        return self.mono
+
+    def time(self) -> float:
+        return self.wall
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps += 1
+        if self.sleeps > 1:
+            raise _StopWatchLoop
+        self.mono += seconds + self._overshoot
+        self.wall += seconds + self._overshoot
+
+
+@pytest.fixture
+def watchdog_mod(monkeypatch):
+    """The module with its thread global reset, so install() is testable."""
+    import utils.stall_watchdog as wd
+    monkeypatch.setattr(wd, "_thread", None)
+    return wd
+
+
+def test_watchdog_is_not_installed_before_install(watchdog_mod):
+    assert watchdog_mod.is_installed() is False
+
+
+def test_install_starts_a_single_daemon_thread(watchdog_mod):
+    watchdog_mod.install()
+    try:
+        assert watchdog_mod.is_installed() is True
+        first = watchdog_mod._thread
+        assert first.daemon, "must not keep the process alive on shutdown"
+
+        watchdog_mod.install()          # idempotent — Streamlit reruns constantly
+        assert watchdog_mod._thread is first
+    finally:
+        watchdog_mod._thread = None     # daemon thread dies with the process
+
+
+def test_a_long_stall_is_reported_with_its_duration(watchdog_mod, monkeypatch, caplog):
+    clock = _FakeClock(overshoot=30.0)   # descheduled 30s past the requested tick
+    monkeypatch.setattr(watchdog_mod, "time", clock)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(_StopWatchLoop):
+            watchdog_mod._watch()
+
+    assert "STALL" in caplog.text
+    assert "30.0s" in caplog.text, "the reported lateness must be the real gap"
+
+
+def test_ordinary_jitter_is_not_reported(watchdog_mod, monkeypatch, caplog):
+    # Below the threshold: a busy-but-healthy process must stay silent, or the
+    # watchdog becomes part of the log flood it exists to help diagnose.
+    clock = _FakeClock(overshoot=0.2)
+    monkeypatch.setattr(watchdog_mod, "time", clock)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(_StopWatchLoop):
+            watchdog_mod._watch()
+
+    assert "STALL" not in caplog.text

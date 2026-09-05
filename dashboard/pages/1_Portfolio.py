@@ -109,7 +109,7 @@ with sc1:
 with sc2:
     panic_disabled = _engine is None or not list(port.positions.values())
     if st.button("🛑 PANIC STOP",
-                 use_container_width=True,
+                 width="stretch",
                  disabled=panic_disabled,
                  help="Force-close every open position at last known price "
                       "and block new BUYs."):
@@ -125,7 +125,7 @@ with sc2:
 
 with sc3:
     if st.button("Clear Block",
-                 use_container_width=True,
+                 width="stretch",
                  disabled=_engine is None,
                  help="Lift a manual safety block (e.g. after Panic Stop)."):
         try:
@@ -137,7 +137,7 @@ with sc3:
 
 with sc4:
     if st.button("Override 30m",
-                 use_container_width=True,
+                 width="stretch",
                  disabled=_engine is None,
                  help="Temporarily allow BUYs even if a circuit breaker is "
                       "active (30 minutes)."):
@@ -178,7 +178,7 @@ if port.trade_log:
                    showgrid=True, gridcolor=GRID),
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True, key="equity_curve")
+    st.plotly_chart(fig, width="stretch", key="equity_curve")
 else:
     st.caption("No realised trades yet. Equity curve will appear after the first SELL.")
 
@@ -238,7 +238,7 @@ with col_left:
                                    range=[s_min * 0.998, s_max * 1.002]),
                         showlegend=False,
                     )
-                    st.plotly_chart(fig_s, use_container_width=True,
+                    st.plotly_chart(fig_s, width="stretch",
                                     key=f"sp_{p['ticker']}",
                                     config={"displayModeBar": False})
                 else:
@@ -281,7 +281,7 @@ with col_right:
                 "Cumul.": f"${cum:+,.2f}",
             })
         df = pd.DataFrame(list(reversed(trade_rows)))
-        st.dataframe(df, hide_index=True, use_container_width=True, height=420)
+        st.dataframe(df, hide_index=True, width="stretch", height=420)
     else:
         st.caption("No trades yet.")
 

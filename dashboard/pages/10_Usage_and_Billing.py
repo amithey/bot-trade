@@ -155,9 +155,9 @@ def _render_breakdown(rows: list[dict], label_col: str) -> None:
         xaxis=dict(gridcolor=GRID, title="USD", zerolinecolor=GRID),
         yaxis=dict(gridcolor=GRID, autorange="reversed"),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     df["Cost"] = df["Cost"].map(format_usd)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
 
 with tab_mode:
@@ -223,4 +223,4 @@ else:
         "Cost":    format_usd(r.cost_usd),
         "Funding": r.funding,
     } for r in rows])
-    st.dataframe(df, use_container_width=True, hide_index=True, height=380)
+    st.dataframe(df, width="stretch", hide_index=True, height=380)
