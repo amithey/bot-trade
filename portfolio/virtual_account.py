@@ -52,6 +52,7 @@ Typical usage
 from __future__ import annotations
 
 import json
+import math
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
@@ -221,7 +222,7 @@ class LivePortfolio:
         fee_rate: float = 0.001,
         name: str = "BotTrade Virtual Account",
     ) -> None:
-        if initial_capital <= 0:
+        if not math.isfinite(initial_capital) or initial_capital <= 0:
             raise ValueError(f"initial_capital must be > 0, got {initial_capital}")
         if not (0.0 <= fee_rate < 0.10):
             raise ValueError(f"fee_rate must be in [0, 0.10), got {fee_rate}")
@@ -370,8 +371,12 @@ class LivePortfolio:
         ticker = ticker.strip().upper()
         if not ticker:
             raise ValueError("Ticker must not be empty.")
-        if price <= 0:
+        if not math.isfinite(price) or price <= 0:
             raise ValueError(f"Execution price must be > 0, got {price}.")
+
+        for label, value in (("quantity", quantity), ("cash_amount", cash_amount)):
+            if value is not None and (not math.isfinite(value) or value <= 0):
+                raise ValueError(f"{label} must be finite and positive.")
 
         with self._lock:
             self._record_daily_snapshot_if_new()
@@ -488,7 +493,7 @@ class LivePortfolio:
             If the ticker has no open position, or *quantity* exceeds holdings.
         """
         ticker = ticker.strip().upper()
-        if price <= 0:
+        if not math.isfinite(price) or price <= 0:
             raise ValueError(f"Execution price must be > 0, got {price}.")
 
         with self._lock:
@@ -502,6 +507,8 @@ class LivePortfolio:
             position = self._positions[ticker]
             qty = float(quantity) if quantity is not None else position.quantity
 
+            if not math.isfinite(qty) or qty <= 0:
+                raise ValueError("Sell quantity must be finite and positive.")
             if qty > position.quantity + 1e-9:
                 raise ValueError(
                     f"Cannot sell {qty:.4f} shares of {ticker}: "
@@ -584,6 +591,8 @@ class LivePortfolio:
         No-op if the ticker has no open position (avoids KeyError).
         """
         ticker = ticker.strip().upper()
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("Mark price must be finite and positive.")
         with self._lock:
             if ticker in self._positions:
                 pos = self._positions[ticker]

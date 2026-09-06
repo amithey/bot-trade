@@ -29,18 +29,13 @@ from dashboard._shared import (
 )
 
 st.set_page_config(page_title="BotTrade - ML Lab", page_icon=":material/model_training:",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 ensure_portfolio_in_session()
 
-st.markdown('<div class="page-title">ML LAB</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="page-sub">All machine-learning signals in one place — regime, '
-    'anomaly, chart patterns, forecast, and the self-learning trade-journal '
-    'classifier. No LLM tokens consumed.</div>',
-    unsafe_allow_html=True,
-)
+from dashboard.components import page_header
+page_header('Machine learning', 'Inspect market regimes, patterns and forecast models.', section='Lab / Model research')
 
 watchlist = list(st.session_state.get("watchlist") or DEFAULT_TICKERS)
 
@@ -274,7 +269,7 @@ with right:
             yaxis=dict(gridcolor="#1a202c", zeroline=False),
             showlegend=False,
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, theme=None, width="stretch")
     except Exception as exc:
         st.caption(f"(chart unavailable: {exc})")
 

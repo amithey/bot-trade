@@ -614,3 +614,17 @@ def test_summary_dict_formats_market_cap_with_commas():
     assert d["Market Cap"] == "$1,234,567,890"
     assert d["Dividend Yield"] == "2.10%"
     assert d["P/E (Trailing)"] == 20.0
+
+
+def test_fundamentals_include_business_quality_and_reject_nonfinite(monkeypatch):
+    info = dict(FULL_INFO, revenueGrowth=.12, earningsGrowth=-.05,
+                profitMargins=.2, operatingMargins=.25, returnOnEquity=.3,
+                freeCashflow=123_000, debtToEquity=45., forwardPE=float("nan"))
+    _patch_ticker(monkeypatch, info=info)
+    fund = make_fetcher().fetch_fundamentals("AAPL")
+    assert fund.revenue_growth == .12
+    assert fund.earnings_growth == -.05
+    assert fund.free_cash_flow == 123_000
+    assert fund.debt_to_equity == 45.
+    assert fund.pe_forward is None
+    assert fund.summary_dict()["Profit Margin (ratio)"] == .2

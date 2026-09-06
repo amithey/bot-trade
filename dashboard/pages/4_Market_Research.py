@@ -36,16 +36,12 @@ from dashboard._shared import (
 )
 
 st.set_page_config(page_title="BotTrade - Market Research", page_icon=":material/manage_search:",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 
-st.markdown('<div class="page-title">MARKET RESEARCH</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="page-sub">On-demand macro briefing — hot sectors, tickers to watch, '
-    'key risks. Each run costs API tokens, so use sparingly (once or twice a day).</div>',
-    unsafe_allow_html=True,
-)
+from dashboard.components import page_header
+page_header('Market research', 'Explore market context, sector themes and company briefings.', section='Research / Market intelligence')
 
 # ── Control bar ─────────────────────────────────────────────────────────────
 watchlist = list(st.session_state.get("watchlist") or DEFAULT_TICKERS)
@@ -101,12 +97,9 @@ if run:
 result = st.session_state.get("_research_result")
 
 if not result:
-    st.info(
-        "No research run yet. Click **Run Research** above — the bot will "
-        "pull fresh headlines, classify sentiment, and ask Claude to "
-        "identify hot sectors, tickers to watch, and key market risks.",
-        icon=None,
-    )
+    from dashboard.components import empty_workspace
+    empty_workspace("Build your market briefing",
+                    "Select symbols and run research to explore headlines, sector themes and market risks.")
 else:
     bias = result.get("bias", {})
     ts: datetime = result.get("ts") or datetime.utcnow()

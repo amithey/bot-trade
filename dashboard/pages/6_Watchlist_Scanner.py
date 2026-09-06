@@ -30,17 +30,12 @@ from dashboard._shared import (
 )
 
 st.set_page_config(page_title="BotTrade - Scanner", page_icon=":material/filter_alt:",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 
-st.markdown('<div class="page-title">WATCHLIST SCANNER</div>',
-            unsafe_allow_html=True)
-st.markdown(
-    '<div class="page-sub">Scans every ticker in your watchlist for actionable '
-    'technical setups — no LLM tokens consumed. Purely rule-based.</div>',
-    unsafe_allow_html=True,
-)
+from dashboard.components import page_header
+page_header('Watchlist scanner', 'Compare technical signals across the symbols you follow.', section='Research / Discover setups')
 
 watchlist = list(st.session_state.get("watchlist") or DEFAULT_TICKERS)
 
@@ -159,56 +154,75 @@ with st.spinner("Fetching indicators…"):
 # Sort: most bullish first
 results.sort(key=lambda r: r.get("score", 0), reverse=True)
 
-# ─── Render rows ─────────────────────────────────────────────────────────────
-for r in results:
-    if "error" in r:
+table_tab, signals_tab = st.tabs(["Market overview", "Signal details"])
+with table_tab:
+    import pandas as pd
+    visible_rows = [r for r in results if "error" not in r and abs(r["score"]) >= min_score]
+    if visible_rows:
+        table = pd.DataFrame([{
+            "Symbol": r["ticker"], "Last price": r["price"],
+            "RSI": r["rsi"], "Signal score": r["score"],
+            "Signals": ", ".join(label for label, _ in r["signals"]) or "No strong signals",
+        } for r in visible_rows])
+        st.dataframe(table, hide_index=True, width="stretch",
+                     column_config={"Last price": st.column_config.NumberColumn(format="$%.2f"),
+                                    "RSI": st.column_config.NumberColumn(format="%.1f")})
+    else:
+        st.info("No symbols match the current score filter.")
+    failed = [r["ticker"] for r in results if "error" in r]
+    if failed:
+        st.caption("Quotes unavailable: " + ", ".join(failed))
+with signals_tab:
+    # ─── Render rows ─────────────────────────────────────────────────────────────
+    for r in results:
+        if "error" in r:
+            st.markdown(
+                f'<div class="bt-panel" style="border-left:4px solid {C_SELL};opacity:0.7">'
+                f'<span style="font-family:monospace;font-weight:700">{r["ticker"]}</span> '
+                f'<span style="color:{C_SELL}">— {r["error"]}</span>'
+                f'</div>', unsafe_allow_html=True,
+            )
+            continue
+
+        if abs(r["score"]) < min_score:
+            continue
+
+        score = r["score"]
+        if score > 0:
+            color = C_BUY
+            verdict = f"+{score} bullish"
+        elif score < 0:
+            color = C_SELL
+            verdict = f"{score} bearish"
+        else:
+            color = C_HOLD
+            verdict = "neutral"
+
+        # Signal chips
+        chips = []
+        for lbl, pol in r["signals"]:
+            c = {"bull": C_BUY, "bear": C_SELL}.get(pol, TEXT_DIM)
+            chips.append(
+                f'<span style="display:inline-block;padding:2px 8px;margin:2px 4px 2px 0;'
+                f'border:1px solid {c};color:{c};border-radius:3px;'
+                f'font-size:0.72rem;font-family:monospace">{lbl}</span>'
+            )
+        chips_html = "".join(chips) or \
+            f'<span style="color:{TEXT_DIM};font-style:italic">no strong signals</span>'
+
         st.markdown(
-            f'<div class="bt-panel" style="border-left:4px solid {C_SELL};opacity:0.7">'
-            f'<span style="font-family:monospace;font-weight:700">{r["ticker"]}</span> '
-            f'<span style="color:{C_SELL}">— {r["error"]}</span>'
+            f'<div class="bt-panel" style="border-left:4px solid {color}">'
+            f'<div style="display:flex;justify-content:space-between;'
+            f'align-items:baseline;margin-bottom:6px">'
+            f'<span style="font-family:monospace;font-weight:700;font-size:1.1rem;'
+            f'color:{TEXT}">{r["ticker"]}</span>'
+            f'<span style="color:{TEXT_DIM}">'
+            f'${r["price"]:.2f} · RSI {r["rsi"]:.0f} · '
+            f'<span style="color:{color};font-weight:700">{verdict}</span>'
+            f'</span></div>'
+            f'<div>{chips_html}</div>'
             f'</div>', unsafe_allow_html=True,
         )
-        continue
-
-    if abs(r["score"]) < min_score:
-        continue
-
-    score = r["score"]
-    if score > 0:
-        color = C_BUY
-        verdict = f"+{score} bullish"
-    elif score < 0:
-        color = C_SELL
-        verdict = f"{score} bearish"
-    else:
-        color = C_HOLD
-        verdict = "neutral"
-
-    # Signal chips
-    chips = []
-    for lbl, pol in r["signals"]:
-        c = {"bull": C_BUY, "bear": C_SELL}.get(pol, TEXT_DIM)
-        chips.append(
-            f'<span style="display:inline-block;padding:2px 8px;margin:2px 4px 2px 0;'
-            f'border:1px solid {c};color:{c};border-radius:3px;'
-            f'font-size:0.72rem;font-family:monospace">{lbl}</span>'
-        )
-    chips_html = "".join(chips) or \
-        f'<span style="color:{TEXT_DIM};font-style:italic">no strong signals</span>'
-
-    st.markdown(
-        f'<div class="bt-panel" style="border-left:4px solid {color}">'
-        f'<div style="display:flex;justify-content:space-between;'
-        f'align-items:baseline;margin-bottom:6px">'
-        f'<span style="font-family:monospace;font-weight:700;font-size:1.1rem;'
-        f'color:{TEXT}">{r["ticker"]}</span>'
-        f'<span style="color:{TEXT_DIM}">'
-        f'${r["price"]:.2f} · RSI {r["rsi"]:.0f} · '
-        f'<span style="color:{color};font-weight:700">{verdict}</span>'
-        f'</span></div>'
-        f'<div>{chips_html}</div>'
-        f'</div>', unsafe_allow_html=True,
-    )
 
 st.markdown("---")
 st.caption(

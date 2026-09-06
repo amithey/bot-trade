@@ -898,7 +898,8 @@ class AITradingEngine:
                 if value != "N/A"
             )
             range_note = ""
-            if fund.week_52_high and fund.week_52_low:
+            if (fund.week_52_high and fund.week_52_low
+                    and fund.week_52_high > fund.week_52_low):
                 range_pct = (
                     (close - fund.week_52_low)
                     / (fund.week_52_high - fund.week_52_low)
@@ -912,10 +913,13 @@ class AITradingEngine:
                 "### SECTION 6: FUNDAMENTAL & VALUATION DATA\n"
                 + fund_lines
                 + range_note + "\n\n"
-                + "Valuation guidance: A trailing P/E > 30 signals elevated growth "
-                  "expectations — treat as a risk factor when technical signals are mixed. "
-                  "A P/E < 15 or price near the 52-week low may represent value. "
-                  "Use fundamentals as a tie-breaker when technical signals conflict."
+                + "Assess valuation together with revenue and earnings growth, margins, "
+                  "free cash flow, leverage and sector context when supplied. Ratio fields "
+                  "use decimals (0.10 = 10%). Debt/equity is a percentage. "
+                  "A low P/E or a price near its annual low alone is not evidence of value. "
+                  "Do not invent missing metrics or sector benchmarks. State material data "
+                  "gaps, and distinguish company fundamentals from technical timing. "
+                  "These are current provider snapshots, not audited point-in-time history."
             )
 
         # --- Section 6 or 7: Decision Request -------------------------- #

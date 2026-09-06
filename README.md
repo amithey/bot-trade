@@ -151,6 +151,31 @@ tests/              pytest suite, run in CI on every push and PR
 
 ## Testing
 
+### Dashboard and execution hardening
+
+- Shared colors, typography, responsive layout and reduced-motion styles live
+  in `dashboard/theme.py`; account/session helpers stay in `_shared.py`.
+- The command center explains the selected strategy's analysis coverage and
+  the active profile's exposure, stop-loss and take-profit limits.
+- `risk/sizing.py` applies the smaller of the user and profile caps to total
+  exposure in a symbol, including existing holdings and entry fees. Pyramiding
+  only adds to profitable positions; smaller analyst allocations are respected.
+- Portfolio orders and marks reject non-finite or non-positive prices and
+  quantities before changing balances.
+- Fundamental snapshots include growth, margins, return on equity, free cash
+  flow and leverage when provided. Missing metrics remain unavailable; the AI
+  prompt explicitly distinguishes missing evidence from valuation conclusions.
+
+These changes improve software behavior; they do not establish investment
+performance. Execution remains virtual. Fundamental snapshots are current
+provider data, not point-in-time statements suitable for historical backtests.
+
+Focused regression checks:
+
+```bash
+python -m pytest -q tests/test_execution_safety.py tests/test_market_data.py tests/test_risk.py
+```
+
 ```bash
 pytest -q
 ```

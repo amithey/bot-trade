@@ -27,16 +27,12 @@ from dashboard._shared import (
 )
 
 st.set_page_config(page_title="BotTrade - Sector Heatmap", page_icon=":material/grid_view:",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 
-st.markdown('<div class="page-title">SECTOR HEATMAP</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="page-sub">Real-time snapshot of sector rotation — no AI tokens consumed. '
-    'Data is cached for 5 min; click refresh to force reload.</div>',
-    unsafe_allow_html=True,
-)
+from dashboard.components import page_header
+page_header('Sector heatmap', 'Follow sector performance and rotation across the market.', section='Research / Market overview')
 
 # ─── GICS sector ETFs + major benchmarks ────────────────────────────────────
 _SECTOR_ETFS = {
@@ -146,8 +142,10 @@ def _render_grid(df: pd.DataFrame, labels: dict[str, str], *, cols: int = 4) -> 
             dm = r.get("ret_1m_pct") or 0.0
             hi = r.get("from_hi_pct") or 0.0
             c1 = _color_for(d1)
+            heat_rgb = "38,166,154" if d1 >= 0 else "239,83,80"
+            heat_alpha = min(.35, .08 + abs(d1) * .05)
             col.markdown(
-                f'<div class="bt-panel" style="text-align:left">'
+                f'<div class="bt-panel" style="text-align:left;background:rgba({heat_rgb},{heat_alpha:.2f});min-height:132px">'
                 f'<div style="display:flex;justify-content:space-between;'
                 f'align-items:baseline">'
                 f'<span style="font-family:monospace;font-weight:700;color:{TEXT}">{sym}</span>'
