@@ -26,7 +26,7 @@ from dashboard._shared import (
 
 st.set_page_config(page_title="BotTrade - Analytics",
                    page_icon=":material/analytics:",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 ensure_portfolio_in_session()
@@ -39,13 +39,8 @@ from analytics import (
 
 port = st.session_state["portfolio"]
 
-st.markdown('<div class="page-title">ANALYTICS</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="page-sub">Quantitative performance — Sharpe / Sortino / Calmar, '
-    'equity vs benchmark, drawdown, P&amp;L attribution, holdings risk. '
-    'No LLM tokens consumed.</div>',
-    unsafe_allow_html=True,
-)
+from dashboard.components import page_header
+page_header('Performance analytics', 'Explore returns, drawdowns, attribution and concentration.', section='Lab / Portfolio analysis')
 
 # ─── Controls ──────────────────────────────────────────────────────────────
 c_bench, c_corr, c_info = st.columns([1, 1, 3])
@@ -235,7 +230,7 @@ fig_eq.update_layout(
     legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=TEXT)),
     hovermode="x unified",
 )
-st.plotly_chart(fig_eq, width="stretch")
+st.plotly_chart(fig_eq, theme=None, width="stretch")
 
 
 # ─── Drawdown + per-trade scatter ─────────────────────────────────────────
@@ -260,7 +255,7 @@ with c_dd:
         yaxis=dict(gridcolor=GRID, color=TEXT_DIM, ticksuffix="%"),
         showlegend=False,
     )
-    st.plotly_chart(fig_dd, width="stretch")
+    st.plotly_chart(fig_dd, theme=None, width="stretch")
 
 with c_scatter:
     st.markdown('<div class="bt-section-title">ROUND-TRIP P&L</div>',
@@ -290,7 +285,7 @@ with c_scatter:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$",
                        title="Realised P&L"),
         )
-        st.plotly_chart(fig_sc, width="stretch")
+        st.plotly_chart(fig_sc, theme=None, width="stretch")
     else:
         st.caption("No completed round trips yet.")
 
@@ -326,7 +321,7 @@ with c_tk:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$"),
             showlegend=False,
         )
-        st.plotly_chart(fig_tk, width="stretch")
+        st.plotly_chart(fig_tk, theme=None, width="stretch")
     else:
         st.caption("(empty)")
 
@@ -348,7 +343,7 @@ with c_wd:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$"),
             showlegend=False,
         )
-        st.plotly_chart(fig_wd, width="stretch")
+        st.plotly_chart(fig_wd, theme=None, width="stretch")
     else:
         st.caption("(empty)")
 
@@ -370,7 +365,7 @@ with c_hr:
             yaxis=dict(gridcolor=GRID, color=TEXT_DIM, tickprefix="$"),
             showlegend=False,
         )
-        st.plotly_chart(fig_hr, width="stretch")
+        st.plotly_chart(fig_hr, theme=None, width="stretch")
     else:
         st.caption("(empty)")
 
@@ -405,7 +400,7 @@ with c_conc:
             showlegend=False,
             font=dict(color=TEXT),
         )
-        st.plotly_chart(fig_pie, width="stretch")
+        st.plotly_chart(fig_pie, theme=None, width="stretch")
     else:
         st.caption("No open positions.")
 
@@ -427,7 +422,7 @@ with c_corr:
             xaxis=dict(color=TEXT_DIM),
             yaxis=dict(color=TEXT_DIM, autorange="reversed"),
         )
-        st.plotly_chart(fig_h, width="stretch")
+        st.plotly_chart(fig_h, theme=None, width="stretch")
     else:
         st.caption("Need ≥ 2 open positions with overlapping price history.")
 

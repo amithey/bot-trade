@@ -24,7 +24,6 @@ from datetime import datetime
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
 from dashboard._shared import (
@@ -61,7 +60,7 @@ st.set_page_config(
     page_title="BotTrade — Live",
     page_icon=":material/monitoring:",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 secure_page()
 ensure_profile_in_session()
@@ -146,8 +145,8 @@ st.markdown(
     f'<div class="bt-brand">'
     f'<div style="display:flex;align-items:center;gap:.8rem;">'
     f'<div class="bt-brand-mark">BT</div>'
-    f'<div><div class="bt-brand-title">BotTrade Command Center</div>'
-    f'<div class="bt-brand-sub">Autonomous market analysis and execution terminal</div></div>'
+    f'<div><div class="bt-brand-title">BotTrade / Chart workspace</div>'
+    f'<div class="bt-brand-sub">Analyze markets. Monitor strategies. Manage exposure.</div></div>'
     f'</div>'
     f'<div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end;">'
     f'<span class="badge badge-blue">{_html.escape(_plan_badge)} plan</span>'
@@ -222,134 +221,145 @@ _tenant = get_tenant()
 _plan_ent = _tenant.entitlement
 
 if not _plan_ent.llm_available:
-    st.info(
-        f"**{_plan_ent.plan.name} plan · running on local computation.** "
-        f"{_plan_ent.lock_reason} "
-        f"Committee ×38 works fully without one — it votes with 38 technical "
-        f"indicators and makes no API calls.",
-        icon="🗳",
-    )
+    with st.sidebar:
+        st.caption("Committee mode uses local indicators. Add an API key in Settings to enable AI analysis.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  TOP CONTROL BAR  — single row, all columns share identical structure
 # ─────────────────────────────────────────────────────────────────────────────
-c_ticker, c_strategy, c_cap, c_size, c_risk, c_interval = st.columns(
-    [2.1, 1.5, 1.2, 1.4, 1.4, 1.0],
-    gap="small",
-)
+control_panel, c_start, c_reset = st.columns([6, 1, 1], gap="small")
+with control_panel:
+    with st.expander("Symbol, strategy & risk controls", expanded=False):
+        c_ticker, c_strategy, c_interval = st.columns([2, 2, 1], gap="small")
+        c_cap, c_size, c_risk = st.columns(3, gap="small")
 
-with c_ticker:
-    _options = list(dict.fromkeys(
-        list(st.session_state.get("watchlist") or []) + DEFAULT_TICKERS
-    )) + [CUSTOM_LABEL]
-    prev_sel = st.session_state.get("ticker_sel", state["ticker"])
-    idx = _options.index(prev_sel) if prev_sel in _options else 0
-    sel = st.selectbox("TICKER", _options, index=idx, key="ticker_sel_widget")
-    if sel == CUSTOM_LABEL:
-        custom = st.text_input("", value=st.session_state.get("ticker_custom", ""),
-                               placeholder="e.g. SOL-USD",
-                               label_visibility="collapsed",
-                               key="ticker_custom_input").upper().strip()
-        ticker = custom or state["ticker"] or "BTC-USD"
-        st.session_state["ticker_custom"] = ticker
-    else:
-        ticker = sel
-    st.session_state["ticker_sel"] = ticker
+        with c_ticker:
+            _options = list(dict.fromkeys(
+                list(st.session_state.get("watchlist") or []) + DEFAULT_TICKERS
+            )) + [CUSTOM_LABEL]
+            prev_sel = st.session_state.get("ticker_sel", state["ticker"])
+            idx = _options.index(prev_sel) if prev_sel in _options else 0
+            sel = st.selectbox("TICKER", _options, index=idx, key="ticker_sel_widget")
+            if sel == CUSTOM_LABEL:
+                custom = st.text_input("", value=st.session_state.get("ticker_custom", ""),
+                                       placeholder="e.g. SOL-USD",
+                                       label_visibility="collapsed",
+                                       key="ticker_custom_input").upper().strip()
+                ticker = custom or state["ticker"] or "BTC-USD"
+                st.session_state["ticker_custom"] = ticker
+            else:
+                ticker = sel
+            st.session_state["ticker_sel"] = ticker
 
-with c_strategy:
-    _STRAT_LABELS = {
-        "AI": "🧠 AI Brain",
-        "COMMITTEE": "🗳 Committee ×38",
-        "HYBRID": "🤝 Hybrid",
-        "BOARDROOM": "🪑 Boardroom ×8",
-    }
-    _strat_opts = ["AI", "COMMITTEE", "HYBRID", "BOARDROOM"]
-    # Modes the plan does not cover stay visible but locked, so the upgrade
-    # path is obvious instead of the option silently vanishing.
-    _ent = _tenant.entitlement
-    _locked = {m for m in _strat_opts if not _ent.allows(m)}
-    prev_strat = st.session_state.get("strategy_mode",
-                                      state.get("strategy_mode", "AI"))
-    if prev_strat in _locked:
-        prev_strat = "COMMITTEE"
-    strat_idx = _strat_opts.index(prev_strat) if prev_strat in _strat_opts else 0
-    strategy_mode = st.selectbox(
-        "STRATEGY", _strat_opts, index=strat_idx,
-        format_func=lambda s: (f"🔒 {_STRAT_LABELS.get(s, s)}" if s in _locked
-                               else _STRAT_LABELS.get(s, s)),
-        key="strategy_widget",
-        help="🔒 needs an API key or a plan upgrade — see Settings. "
-             "Full comparison in the sidebar → 📖 Strategy Guide.",
-    )
-    if strategy_mode in _locked:
-        st.caption(f"🔒 {_ent.lock_reason or 'Not available on your plan.'}")
-        strategy_mode = "COMMITTEE"
-    st.session_state["strategy_mode"] = strategy_mode
+        with c_strategy:
+            _STRAT_LABELS = {
+                "AI": "🧠 AI Brain",
+                "COMMITTEE": "🗳 Committee ×38",
+                "HYBRID": "🤝 Hybrid",
+                "BOARDROOM": "🪑 Boardroom ×8",
+            }
+            _strat_opts = ["AI", "COMMITTEE", "HYBRID", "BOARDROOM"]
+            # Modes the plan does not cover stay visible but locked, so the upgrade
+            # path is obvious instead of the option silently vanishing.
+            _ent = _tenant.entitlement
+            _locked = {m for m in _strat_opts if not _ent.allows(m)}
+            prev_strat = st.session_state.get("strategy_mode",
+                                              state.get("strategy_mode", "AI"))
+            if prev_strat in _locked:
+                prev_strat = "COMMITTEE"
+            strat_idx = _strat_opts.index(prev_strat) if prev_strat in _strat_opts else 0
+            strategy_mode = st.selectbox(
+                "STRATEGY", _strat_opts, index=strat_idx,
+                format_func=lambda s: (f"🔒 {_STRAT_LABELS.get(s, s)}" if s in _locked
+                                       else _STRAT_LABELS.get(s, s)),
+                key="strategy_widget",
+                help="🔒 needs an API key or a plan upgrade — see Settings. "
+                     "Full comparison in the sidebar → 📖 Strategy Guide.",
+            )
+            if strategy_mode in _locked:
+                st.caption(f"🔒 {_ent.lock_reason or 'Not available on your plan.'}")
+                strategy_mode = "COMMITTEE"
+            st.session_state["strategy_mode"] = strategy_mode
 
-with c_cap:
-    prev_cap = int(st.session_state["starting_capital"])
-    cap = st.number_input("CAPITAL ($)", min_value=1000, max_value=10_000_000,
-                          value=prev_cap, step=1000,
-                          key="capital_widget")
-    if cap != prev_cap:
-        st.session_state["starting_capital"] = cap
-        save_profile()
+        with c_cap:
+            prev_cap = int(st.session_state["starting_capital"])
+            cap = st.number_input("CAPITAL ($)", min_value=1000, max_value=10_000_000,
+                                  value=prev_cap, step=1000,
+                                  key="capital_widget")
+            if cap != prev_cap:
+                st.session_state["starting_capital"] = cap
+                save_profile()
 
-with c_size:
-    prev_ts = int(st.session_state["trade_size_pct"])
-    ts = st.slider("TRADE SIZE %", 5, 100, prev_ts, step=5,
-                   key="trade_size_widget")
-    if ts != prev_ts:
-        st.session_state["trade_size_pct"] = ts
-        save_profile()
+        with c_size:
+            prev_ts = int(st.session_state["trade_size_pct"])
+            ts = st.slider("TRADE SIZE %", 5, 100, prev_ts, step=5,
+                           key="trade_size_widget")
+            if ts != prev_ts:
+                st.session_state["trade_size_pct"] = ts
+                save_profile()
 
-with c_risk:
-    _RISK_LABELS = {
-        "Conservative": "Conservative",
-        "Balanced":     "Balanced",
-        "Aggressive":   "Aggressive",
-        "Micro-Scalp":  "Micro-Scalp",
-    }
-    prev_risk = st.session_state.get("risk_profile", "Balanced")
-    risk_idx  = RISK_CHOICES.index(prev_risk) if prev_risk in RISK_CHOICES else 1
-    risk = st.selectbox("RISK", RISK_CHOICES, index=risk_idx,
-                        format_func=lambda r: _RISK_LABELS.get(r, r),
-                        key="risk_widget",
-                        help="Safe · Balanced · Max")
-    if risk != prev_risk:
-        st.session_state["risk_profile"] = risk
-        save_profile()
+        with c_risk:
+            _RISK_LABELS = {
+                "Conservative": "Conservative",
+                "Balanced":     "Balanced",
+                "Aggressive":   "Aggressive",
+                "Micro-Scalp":  "Micro-Scalp",
+            }
+            prev_risk = st.session_state.get("risk_profile", "Balanced")
+            risk_idx  = RISK_CHOICES.index(prev_risk) if prev_risk in RISK_CHOICES else 1
+            risk = st.selectbox("RISK", RISK_CHOICES, index=risk_idx,
+                                format_func=lambda r: _RISK_LABELS.get(r, r),
+                                key="risk_widget",
+                                help="Controls position exposure, confidence threshold, stop loss and take profit.")
+            if risk != prev_risk:
+                st.session_state["risk_profile"] = risk
+                save_profile()
 
-with c_interval:
-    # Offer only intervals the plan actually permits — a slider that lets you
-    # pick 15s and then silently runs at 300s is worse than not offering it.
-    # The ladder runs past 300s so every plan, including the slowest, still
-    # has a real choice rather than a single pinned value.
-    _all_intervals = [15, 30, 60, 120, 300, 600, 900]
-    _ivl_opts = [v for v in _all_intervals if v >= _plan_ent.min_interval_sec] \
-        or [_plan_ent.min_interval_sec]
-    _ivl_prev = int(state["interval_sec"])
-    if _ivl_prev not in _ivl_opts:
-        _ivl_prev = _ivl_opts[0]
-    _ivl_help = (f"{_plan_ent.plan.name} plan cycles no faster than "
-                 f"{_plan_ent.min_interval_sec}s."
-                 if len(_ivl_opts) < len(_all_intervals) else None)
-    if len(_ivl_opts) == 1:
-        # select_slider needs a range; a single permitted value gets a
-        # read-only control instead of a one-position slider.
-        interval = _ivl_opts[0]
-        st.selectbox("CYCLE", _ivl_opts, index=0, disabled=True,
-                     format_func=lambda v: f"{v}s",
-                     key="interval_widget", help=_ivl_help)
-    else:
-        interval = st.select_slider(
-            "CYCLE", options=_ivl_opts, value=_ivl_prev,
-            key="interval_widget", format_func=lambda v: f"{v}s",
-            help=_ivl_help,
+        with c_interval:
+            # Offer only intervals the plan actually permits — a slider that lets you
+            # pick 15s and then silently runs at 300s is worse than not offering it.
+            # The ladder runs past 300s so every plan, including the slowest, still
+            # has a real choice rather than a single pinned value.
+            _all_intervals = [15, 30, 60, 120, 300, 600, 900]
+            _ivl_opts = [v for v in _all_intervals if v >= _plan_ent.min_interval_sec] \
+                or [_plan_ent.min_interval_sec]
+            _ivl_prev = int(state["interval_sec"])
+            if _ivl_prev not in _ivl_opts:
+                _ivl_prev = _ivl_opts[0]
+            _ivl_help = (f"{_plan_ent.plan.name} plan cycles no faster than "
+                         f"{_plan_ent.min_interval_sec}s."
+                         if len(_ivl_opts) < len(_all_intervals) else None)
+            if len(_ivl_opts) == 1:
+                # select_slider needs a range; a single permitted value gets a
+                # read-only control instead of a one-position slider.
+                interval = _ivl_opts[0]
+                st.selectbox("CYCLE", _ivl_opts, index=0, disabled=True,
+                             format_func=lambda v: f"{v}s",
+                             key="interval_widget", help=_ivl_help)
+            else:
+                interval = st.select_slider(
+                    "CYCLE", options=_ivl_opts, value=_ivl_prev,
+                    key="interval_widget", format_func=lambda v: f"{v}s",
+                    help=_ivl_help,
+                )
+            st.session_state["interval_sec"] = int(interval)
+
+        # Explain the active policy next to the controls that change it.
+        from config.user_profile import RISK_ENVELOPES
+        _active_envelope = RISK_ENVELOPES[risk]
+        _strategy_scope = {
+            "COMMITTEE": "Technical indicators only",
+            "AI": "Technical, fundamental and knowledge analysis",
+            "HYBRID": "Technical consensus with AI context review",
+            "BOARDROOM": "Multiple analysts with a final chair review",
+        }
+        st.caption(
+            f"{_strategy_scope[strategy_mode]} · "
+            f"Symbol exposure cap {min(ts, _active_envelope.size_max_pct):g}% · "
+            f"Stop loss {_active_envelope.stop_loss_pct:g}% · "
+            f"Take profit {_active_envelope.take_profit_pct:g}% · "
+            f"Minimum signal confidence {_active_envelope.conf_threshold:.0%}"
         )
-    st.session_state["interval_sec"] = int(interval)
-
-c_start, c_reset, c_spacer = st.columns([1.1, 1.1, 6.8], gap="small")
 
 with c_start:
     if engine.is_running():
@@ -514,145 +524,41 @@ st.markdown(_kpi_strip, unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  MAIN LAYOUT — full-width chart (TradingView style)
 # ─────────────────────────────────────────────────────────────────────────────
-if True:
+from dashboard.charts import market_chart
+from dashboard.components import render_desk_sidebar, empty_workspace
+
+chart_column, context_column = st.columns([4.3, 1.25], gap="small")
+with chart_column:
     df = state.get("last_df")
+    _last_bar = str(df.index[-1])[:19] if df is not None and len(df) else "Awaiting data"
+    st.markdown(
+        f'<div class="quote-bar"><span class="quote-symbol">{_html.escape(ticker)}</span>'
+        f'<span class="quote-detail">Candles · Volume · RSI · MACD</span>'
+        f'<span class="quote-detail" style="margin-left:auto">Last bar: {_html.escape(_last_bar)}</span></div>',
+        unsafe_allow_html=True,
+    )
     if df is None or len(df) == 0:
-        if engine.is_running():
-            st.info(f"Fetching {ticker} data. First cycle after a ticker "
-                    f"change takes 10–15 seconds.")
-        else:
-            st.info("Waiting for market data. Press START to begin.")
+        empty_workspace(
+            "Loading market data" if engine.is_running() else "Your market workspace",
+            f"Fetching candles for {ticker}. The first analysis may take a few moments."
+            if engine.is_running() else
+            "Choose a symbol and strategy, then start the bot to see candles, indicators and trade signals.",
+        )
     else:
-        fig = make_subplots(
-            rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-            row_heights=[0.56, 0.12, 0.16, 0.16],
-            subplot_titles=("", "Volume", "RSI-14", "MACD"),
-        )
-        idx = df.index
-        if hasattr(idx, "tz") and idx.tz is not None:
-            idx = idx.tz_localize(None)
-
-        fig.add_trace(go.Candlestick(
-            x=idx, open=df["Open"], high=df["High"], low=df["Low"],
-            close=df["Close"], name="Price",
-            increasing_line_color=C_BUY, decreasing_line_color=C_SELL,
-            increasing_fillcolor=C_BUY, decreasing_fillcolor=C_SELL,
-            showlegend=False,
-        ), row=1, col=1)
-
-        # Bollinger band envelope (soft fill behind the SMAs)
-        if "BB_Upper_20" in df.columns and "BB_Lower_20" in df.columns:
-            fig.add_trace(go.Scatter(
-                x=idx, y=df["BB_Upper_20"], name="BB±2σ",
-                line=dict(color="rgba(0,183,255,0.28)", width=0.8),
-                legendgroup="bb", showlegend=True,
-            ), row=1, col=1)
-            fig.add_trace(go.Scatter(
-                x=idx, y=df["BB_Lower_20"], name="BB lower",
-                line=dict(color="rgba(0,183,255,0.28)", width=0.8),
-                fill="tonexty", fillcolor="rgba(0,183,255,0.045)",
-                legendgroup="bb", showlegend=False,
-            ), row=1, col=1)
-
-        for col_name, clr, lbl, w in [
-            ("SMA_20",  "#f39c12", "SMA20", 1.1),
-            ("SMA_50",  "#3498db", "SMA50", 1.1),
-            ("SMA_200", "#e74c3c", "SMA200", 1.6),
-        ]:
-            if col_name in df.columns:
-                fig.add_trace(go.Scatter(
-                    x=idx, y=df[col_name], name=lbl,
-                    line=dict(color=clr, width=w), opacity=0.85,
-                ), row=1, col=1)
-
-        # Trade markers for this ticker
-        relevant = [t for t in port.trade_log if t.ticker == ticker]
-        buys  = [t for t in relevant if t.action == "BUY"]
-        sells = [t for t in relevant if "SELL" in t.action]
-        if buys:
-            fig.add_trace(go.Scatter(
-                x=[t.executed_at for t in buys],
-                y=[t.price for t in buys],
-                mode="markers", name="BUY",
-                marker=dict(symbol="triangle-up", size=16, color=C_BUY,
-                            line=dict(width=2, color="white")),
-                hovertemplate="BUY $%{y:.2f}<extra></extra>",
-            ), row=1, col=1)
-        if sells:
-            fig.add_trace(go.Scatter(
-                x=[t.executed_at for t in sells],
-                y=[t.price for t in sells],
-                mode="markers", name="SELL",
-                marker=dict(symbol="triangle-down", size=16, color=C_SELL,
-                            line=dict(width=2, color="white")),
-                hovertemplate="SELL $%{y:.2f}<extra></extra>",
-            ), row=1, col=1)
-
-        # Volume bars colored by candle direction
-        if "Volume" in df.columns:
-            vol_colors = [C_BUY if c >= o else C_SELL
-                          for c, o in zip(df["Close"], df["Open"])]
-            fig.add_trace(go.Bar(
-                x=idx, y=df["Volume"], name="Volume", showlegend=False,
-                marker_color=vol_colors, opacity=0.5,
-            ), row=2, col=1)
-
-        rsi_col = next((c for c in df.columns if c.startswith("RSI_")), None)
-        if rsi_col:
-            fig.add_hrect(y0=70, y1=100, fillcolor="rgba(255,71,87,0.07)",
-                          line_width=0, row=3, col=1)
-            fig.add_hrect(y0=0, y1=30, fillcolor="rgba(0,212,170,0.07)",
-                          line_width=0, row=3, col=1)
-            fig.add_trace(go.Scatter(
-                x=idx, y=df[rsi_col], name="RSI",
-                line=dict(color="#ab47bc", width=1.4),
-            ), row=3, col=1)
-
-        if "MACD" in df.columns:
-            hist = df["MACD_Histogram"]
-            fig.add_trace(go.Bar(
-                x=idx, y=hist, name="Hist", showlegend=False,
-                marker_color=[C_BUY if v >= 0 else C_SELL for v in hist],
-                opacity=0.65,
-            ), row=4, col=1)
-            fig.add_trace(go.Scatter(
-                x=idx, y=df["MACD"], name="MACD",
-                line=dict(color=CYAN, width=1.1),
-            ), row=4, col=1)
-            fig.add_trace(go.Scatter(
-                x=idx, y=df["MACD_Signal"], name="Signal",
-                line=dict(color="#f39c12", width=1.1),
-            ), row=4, col=1)
-
-        is_crypto = "-USD" in ticker.upper()
-        fig.update_layout(
-            template="plotly_dark", height=760,
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#020406",
-            margin=dict(l=12, r=54, t=24, b=12),
-            hovermode="x unified",
-            font=dict(family="Inter, Segoe UI, sans-serif", size=11, color=TEXT),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                        xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"),
-            xaxis=dict(rangeslider_visible=False,
-                       rangebreaks=[] if is_crypto else [dict(bounds=["sat","mon"])],
-                       showgrid=True, gridcolor=GRID),
-            yaxis=dict(side="right", showgrid=True, gridcolor=GRID),
-            yaxis2=dict(side="right", showgrid=False),
-            yaxis3=dict(side="right", range=[0, 100], showgrid=True,
-                        gridcolor=GRID),
-            yaxis4=dict(side="right", showgrid=True, gridcolor=GRID),
-        )
-        for ann in fig.layout.annotations:
-            ann.font.size = 10
-            ann.font.color = TEXT_DIM
-        st.plotly_chart(fig, width="stretch", key="main_chart")
+        fig = market_chart(df, ticker, port.trade_log)
+        st.plotly_chart(fig, theme=None, width="stretch", key="main_chart",
+                        config={"displaylogo": False, "scrollZoom": True,
+                                "modeBarButtonsToRemove": ["lasso2d", "select2d"]})
+with context_column:
+    render_desk_sidebar(state, port, st.session_state.get("watchlist") or DEFAULT_TICKERS,
+                        risk=risk, cap_pct=min(ts, _active_envelope.size_max_pct))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  BOTTOM TABS — Decision · Positions · Trades · Events
 # ─────────────────────────────────────────────────────────────────────────────
 tab_dec, tab_board, tab_com, tab_eq, tab_pos, tab_tr, tab_log = st.tabs(
-    ["DECISION", "BOARDROOM", "COMMITTEE ×38", "EQUITY", "POSITIONS",
-     "TRADE HISTORY", "ACTIVITY"]
+    ["Overview", "Analyst desk", "Technical signals", "Equity", "Positions",
+     "Orders & trades", "Activity log"]
 )
 
 with tab_dec:
@@ -676,9 +582,9 @@ with tab_dec:
         attr_label = getattr(dec, "attractiveness_label", "NEUTRAL")
         outlook = getattr(dec, "price_outlook", "UNKNOWN")
         chips = "".join(
-            f'<span style="display:inline-block;background:#0a1626;'
-            f'border:1px solid #1a3448;border-radius:3px;padding:1px 7px;'
-            f'margin:1px 2px;font-size:.64rem;color:#6090aa;">'
+            f'<span style="display:inline-block;background:#1e222d;'
+            f'border:1px solid #2a2e39;border-radius:3px;padding:1px 7px;'
+            f'margin:1px 2px;font-size:.64rem;color:#9598a1;">'
             f'{_html.escape(i.replace("_"," ").title()[:24])}</span>'
             for i in (dec.key_indicators or [])[:5]
         ) or f'<span style="color:#2a4050;font-size:.66rem;">—</span>'
@@ -693,7 +599,7 @@ with tab_dec:
             f'<div style="flex:1;">'
             f'<div style="color:{TEXT_DIM};font-size:.6rem;letter-spacing:.12em;'
             f'text-transform:uppercase;">Confidence</div>'
-            f'<div style="background:#040a10;border:1px solid #0e1e2e;'
+            f'<div style="background:#131722;border:1px solid #2a2e39;'
             f'border-radius:3px;height:6px;overflow:hidden;margin-top:3px;">'
             f'<div style="height:6px;width:{conf_pct}%;background:{conf_color};"></div>'
             f'</div>'
@@ -717,9 +623,9 @@ with tab_dec:
             f'<div style="margin:.4rem 0;">{chips}</div>'
             f'<div style="color:{TEXT_DIM};font-size:.6rem;letter-spacing:.12em;'
             f'text-transform:uppercase;margin-top:.4rem;">Reasoning</div>'
-            f'<div style="background:#040a10;border:1px solid #0c1824;'
+            f'<div style="background:#131722;border:1px solid #2a2e39;'
             f'border-radius:4px;padding:.5rem .7rem;font-size:.72rem;'
-            f'line-height:1.55;color:#9ebbd4;max-height:160px;overflow-y:auto;'
+            f'line-height:1.55;color:#d1d4dc;max-height:160px;overflow-y:auto;'
             f'margin-top:.3rem;">{reasoning}</div>'
             f'</div>',
             unsafe_allow_html=True,
@@ -777,13 +683,13 @@ with tab_board:
                     f'margin-bottom:.45rem;">'
                     f'<span style="color:{clr};font-weight:900;'
                     f'font-size:1.05rem;">{m["vote"]}</span>'
-                    f'<div style="flex:1;background:#040a10;'
-                    f'border:1px solid #0e1e2e;border-radius:3px;height:5px;">'
+                    f'<div style="flex:1;background:#131722;'
+                    f'border:1px solid #2a2e39;border-radius:3px;height:5px;">'
                     f'<div style="height:5px;width:{conv}%;'
                     f'background:{clr};"></div></div>'
                     f'<span style="color:{TEXT_DIM};font-family:monospace;'
                     f'font-size:.64rem;">{conv}%</span></div>'
-                    f'<div style="color:#9ebbd4;font-size:.68rem;'
+                    f'<div style="color:#d1d4dc;font-size:.68rem;'
                     f'line-height:1.5;max-height:108px;overflow-y:auto;">'
                     f'{_html.escape(m["opinion"])}</div>'
                     f'</div>',
@@ -818,9 +724,9 @@ with tab_board:
             f'<span style="color:{TEXT_DIM};font-family:monospace;'
             f'font-size:.8rem;">conf {int(chair["confidence"] * 100)}%'
             f'</span></span></div>'
-            f'<div style="background:#040a10;border:1px solid #0c1824;'
+            f'<div style="background:#131722;border:1px solid #2a2e39;'
             f'border-radius:4px;padding:.5rem .7rem;font-size:.72rem;'
-            f'line-height:1.55;color:#9ebbd4;max-height:170px;'
+            f'line-height:1.55;color:#d1d4dc;max-height:170px;'
             f'overflow-y:auto;">{chair_reason}</div>'
             f'</div>',
             unsafe_allow_html=True,
@@ -870,7 +776,7 @@ with tab_com:
             f'margin:.2rem 0;">'
             f'<span style="color:{TEXT_DIM};font-size:.62rem;width:90px;'
             f'text-transform:uppercase;letter-spacing:.08em;">{cat}</span>'
-            f'<div style="flex:1;background:#040a10;border:1px solid #0e1e2e;'
+            f'<div style="flex:1;background:#131722;border:1px solid #2a2e39;'
             f'border-radius:3px;height:8px;position:relative;">'
             f'<div style="position:absolute;left:50%;top:0;height:8px;'
             f'width:{abs(cs) * 50}%;'
@@ -924,8 +830,8 @@ with tab_com:
                        f'background:rgba(255,77,79,.12);color:{C_SELL};'
                        f'border:1px solid rgba(255,77,79,.4);'
                        if v["vote"] < 0 else
-                       f'background:#0a1220;color:#46607a;'
-                       f'border:1px solid #15263a;')
+                       f'background:#1e222d;color:#9598a1;'
+                       f'border:1px solid #2a2e39;')
                     + f'">{"▲" if v["vote"] > 0 else "▼" if v["vote"] < 0 else "•"} '
                     f'{_html.escape(v["name"])}</span>'
                     for v in by_cat[cat]
@@ -968,8 +874,8 @@ with tab_eq:
         ymin, ymax = min(eq_val), max(eq_val)
         pad = max((ymax - ymin) * 0.15, ymax * 0.001)
         eq_fig.update_layout(
-            template="plotly_dark", height=300,
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#020406",
+            template="bottrade", height=300,
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#131722",
             margin=dict(l=12, r=54, t=12, b=12), showlegend=False,
             font=dict(family="Inter, Segoe UI, sans-serif", size=11,
                       color=TEXT),
@@ -978,7 +884,7 @@ with tab_eq:
                        range=[ymin - pad, ymax + pad],
                        tickprefix="$", tickformat=",.0f"),
         )
-        st.plotly_chart(eq_fig, width="stretch", key="equity_chart")
+        st.plotly_chart(eq_fig, theme=None, width="stretch", key="equity_chart")
         peak = max(eq_val)
         dd = (eq_val[-1] / peak - 1) * 100 if peak else 0.0
         st.caption(f"{len(eq_val)} samples · peak ${peak:,.2f} · "

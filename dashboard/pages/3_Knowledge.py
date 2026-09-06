@@ -33,13 +33,12 @@ def _is_youtube_url(raw: str) -> bool:
         return False
 
 st.set_page_config(page_title="BotTrade - Knowledge", page_icon=":material/database:", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 
-st.markdown('<div class="page-title">KNOWLEDGE BASE</div>', unsafe_allow_html=True)
-st.markdown('<div class="page-sub">ChromaDB status, ingestion, and written playbooks</div>',
-            unsafe_allow_html=True)
+from dashboard.components import page_header
+page_header('Knowledge library', 'Manage the sources and playbooks used in your market analysis.', section='Research / Strategy sources')
 
 # ── Collection status ────────────────────────────────────────────────────────
 try:
@@ -60,145 +59,151 @@ k3.metric("Embedding model", (info.get("embedding_model", "—") or "—").split
 st.caption(f"Path: `{info.get('persist_dir', '—')}`")
 st.markdown("---")
 
-# ── Ingest from YouTube URL / Playlist ───────────────────────────────────────
-st.markdown("##### Ingest from YouTube")
-st.caption("Single video URL or a playlist URL — both are supported.")
+videos_tab, articles_tab, playbooks_tab = st.tabs(["Videos & playlists", "Web articles", "Playbooks"])
+with videos_tab:
+    # ── Ingest from YouTube URL / Playlist ───────────────────────────────────────
+    st.markdown("##### Ingest from YouTube")
+    st.caption("Single video URL or a playlist URL — both are supported.")
 
-col_url, col_btn = st.columns([4, 1])
-url = col_url.text_input(
-    "YouTube URL",
-    placeholder="https://www.youtube.com/watch?v=... or /playlist?list=...",
-    label_visibility="collapsed",
-    key="yt_url_input",
-)
-go_btn = col_btn.button("Ingest", width="stretch")
+    col_url, col_btn = st.columns([4, 1])
+    url = col_url.text_input(
+        "YouTube URL",
+        placeholder="https://www.youtube.com/watch?v=... or /playlist?list=...",
+        label_visibility="collapsed",
+        key="yt_url_input",
+    )
+    go_btn = col_btn.button("Ingest", width="stretch")
 
-if go_btn and url.strip():
-    clean_url = url.strip()
-    if not _is_youtube_url(clean_url):
-        st.error("Only YouTube URLs are allowed "
-                 "(youtube.com / youtu.be / music.youtube.com).")
-    else:
-        is_playlist = "list=" in clean_url or "/playlist?" in clean_url
-        module = "knowledge_ingestion.playlist_scraper" if is_playlist \
-                 else "knowledge_ingestion.youtube_scraper"
-        # Attribute the chunks to whoever is ingesting them: the collection
-        # is shared, so untagged content would be retrievable by everyone.
-        args = [sys.executable, "-X", "utf8", "-m", module,
-                "--url", clean_url, "--owner", account_slug()]
-        with st.status(f"Running {module} …", expanded=True) as s:
-            try:
-                # Streamlit session dir may differ from ROOT on some installs;
-                # spawn from the project root so relative paths match.
-                proc = subprocess.run(
-                    args, cwd=str(ROOT),
-                    capture_output=True, text=True,
-                    timeout=20 * 60,     # 20-min hard cap (was 60m)
-                )
-                output = (proc.stdout or "") + (proc.stderr or "")
-                st.code(output[-4000:] or "(no output)", language="text")
-                if proc.returncode == 0:
-                    s.update(label="Ingestion complete",
-                             state="complete", expanded=False)
-                else:
-                    s.update(label=f"Failed (exit {proc.returncode})",
-                             state="error")
-            except subprocess.TimeoutExpired:
-                s.update(label="Timed out after 20 min", state="error")
-            except Exception as exc:
-                s.update(label=f"{exc}", state="error")
+    if go_btn and url.strip():
+        clean_url = url.strip()
+        if not _is_youtube_url(clean_url):
+            st.error("Only YouTube URLs are allowed "
+                     "(youtube.com / youtu.be / music.youtube.com).")
+        else:
+            is_playlist = "list=" in clean_url or "/playlist?" in clean_url
+            module = "knowledge_ingestion.playlist_scraper" if is_playlist \
+                     else "knowledge_ingestion.youtube_scraper"
+            # Attribute the chunks to whoever is ingesting them: the collection
+            # is shared, so untagged content would be retrievable by everyone.
+            args = [sys.executable, "-X", "utf8", "-m", module,
+                    "--url", clean_url, "--owner", account_slug()]
+            with st.status(f"Running {module} …", expanded=True) as s:
+                try:
+                    # Streamlit session dir may differ from ROOT on some installs;
+                    # spawn from the project root so relative paths match.
+                    proc = subprocess.run(
+                        args, cwd=str(ROOT),
+                        capture_output=True, text=True,
+                        timeout=20 * 60,     # 20-min hard cap (was 60m)
+                    )
+                    output = (proc.stdout or "") + (proc.stderr or "")
+                    st.code(output[-4000:] or "(no output)", language="text")
+                    if proc.returncode == 0:
+                        s.update(label="Ingestion complete",
+                                 state="complete", expanded=False)
+                    else:
+                        s.update(label=f"Failed (exit {proc.returncode})",
+                                 state="error")
+                except subprocess.TimeoutExpired:
+                    s.update(label="Timed out after 20 min", state="error")
+                except Exception as exc:
+                    s.update(label=f"{exc}", state="error")
 
-st.markdown("---")
+    st.markdown("---")
 
-# ── Ingest from Web Article ──────────────────────────────────────────────────
-st.markdown("##### Ingest from Web Article")
-st.caption("Any public strategy/analysis page — Investopedia, TradingView "
-           "ideas, broker blogs, Substack… Text is extracted, chunked and "
-           "deduplicated automatically. One URL per line for batches.")
 
-art_col, art_btn_col = st.columns([4, 1])
-art_urls_raw = art_col.text_area(
-    "Article URLs",
-    placeholder="https://www.investopedia.com/terms/m/macd.asp\n"
-                "https://www.tradingview.com/ideas/...",
-    label_visibility="collapsed",
-    height=80,
-    key="article_urls_input",
-)
-art_go = art_btn_col.button("Ingest Articles", width="stretch")
+with articles_tab:
+    # ── Ingest from Web Article ──────────────────────────────────────────────────
+    st.markdown("##### Ingest from Web Article")
+    st.caption("Any public strategy/analysis page — Investopedia, TradingView "
+               "ideas, broker blogs, Substack… Text is extracted, chunked and "
+               "deduplicated automatically. One URL per line for batches.")
 
-if art_go and art_urls_raw.strip():
-    art_urls = [u.strip() for u in art_urls_raw.splitlines() if u.strip()]
-    # The scraper enforces this too — it is the boundary that matters, since
-    # it also re-checks every redirect hop. Checking here as well just turns a
-    # subprocess failure into a readable message.
-    from knowledge_ingestion.url_guard import is_allowed
-    bad = []
-    for u in art_urls:
-        ok, reason = is_allowed(u)
-        if not ok:
-            bad.append(f"{u} — {reason}")
-    if bad:
-        st.error("These URLs can't be ingested:\n\n" +
-                 "\n\n".join(f"- {b}" for b in bad[:3]))
-    else:
-        args = [sys.executable, "-X", "utf8", "-m",
-                "knowledge_ingestion.article_scraper",
-                "--owner", account_slug()]
+    art_col, art_btn_col = st.columns([4, 1])
+    art_urls_raw = art_col.text_area(
+        "Article URLs",
+        placeholder="https://www.investopedia.com/terms/m/macd.asp\n"
+                    "https://www.tradingview.com/ideas/...",
+        label_visibility="collapsed",
+        height=80,
+        key="article_urls_input",
+    )
+    art_go = art_btn_col.button("Ingest Articles", width="stretch")
+
+    if art_go and art_urls_raw.strip():
+        art_urls = [u.strip() for u in art_urls_raw.splitlines() if u.strip()]
+        # The scraper enforces this too — it is the boundary that matters, since
+        # it also re-checks every redirect hop. Checking here as well just turns a
+        # subprocess failure into a readable message.
+        from knowledge_ingestion.url_guard import is_allowed
+        bad = []
         for u in art_urls:
-            args += ["--url", u]
-        with st.status(f"Ingesting {len(art_urls)} article(s)…",
-                       expanded=True) as s:
+            ok, reason = is_allowed(u)
+            if not ok:
+                bad.append(f"{u} — {reason}")
+        if bad:
+            st.error("These URLs can't be ingested:\n\n" +
+                     "\n\n".join(f"- {b}" for b in bad[:3]))
+        else:
+            args = [sys.executable, "-X", "utf8", "-m",
+                    "knowledge_ingestion.article_scraper",
+                    "--owner", account_slug()]
+            for u in art_urls:
+                args += ["--url", u]
+            with st.status(f"Ingesting {len(art_urls)} article(s)…",
+                           expanded=True) as s:
+                try:
+                    proc = subprocess.run(
+                        args, cwd=str(ROOT),
+                        capture_output=True, text=True,
+                        timeout=10 * 60,
+                    )
+                    output = (proc.stdout or "") + (proc.stderr or "")
+                    st.code(output[-4000:] or "(no output)", language="text")
+                    if proc.returncode == 0:
+                        s.update(label="Articles ingested",
+                                 state="complete", expanded=False)
+                    else:
+                        s.update(label=f"Some articles failed "
+                                       f"(exit {proc.returncode})",
+                                 state="error")
+                except subprocess.TimeoutExpired:
+                    s.update(label="Timed out after 10 min", state="error")
+                except Exception as exc:
+                    s.update(label=f"{exc}", state="error")
+
+    st.markdown("---")
+
+
+with playbooks_tab:
+    # ── Re-run seed strategies ───────────────────────────────────────────────────
+    st.markdown("##### Written Playbooks (Seeded Strategies)")
+    st.caption("Built-in textual knowledge: RSI, MACD, candlesticks, S/R, "
+               "fundamentals, day-trading rules. Idempotent — safe to re-run.")
+
+    if st.button("Re-run Seed Ingestion", width="content"):
+        with st.status("Re-seeding…", expanded=True) as s:
             try:
                 proc = subprocess.run(
-                    args, cwd=str(ROOT),
-                    capture_output=True, text=True,
-                    timeout=10 * 60,
+                    [sys.executable, "-X", "utf8", "-m", "knowledge_ingestion.seed_strategies"],
+                    cwd=str(ROOT), capture_output=True, text=True, timeout=300,
                 )
-                output = (proc.stdout or "") + (proc.stderr or "")
-                st.code(output[-4000:] or "(no output)", language="text")
+                out = (proc.stdout or "") + (proc.stderr or "")
+                st.code(out[-3000:], language="text")
                 if proc.returncode == 0:
-                    s.update(label="Articles ingested",
-                             state="complete", expanded=False)
+                    s.update(label="Seed complete", state="complete", expanded=False)
                 else:
-                    s.update(label=f"Some articles failed "
-                                   f"(exit {proc.returncode})",
-                             state="error")
-            except subprocess.TimeoutExpired:
-                s.update(label="Timed out after 10 min", state="error")
+                    s.update(label=f"Failed (exit {proc.returncode})", state="error")
             except Exception as exc:
                 s.update(label=f"{exc}", state="error")
 
-st.markdown("---")
-
-# ── Re-run seed strategies ───────────────────────────────────────────────────
-st.markdown("##### Written Playbooks (Seeded Strategies)")
-st.caption("Built-in textual knowledge: RSI, MACD, candlesticks, S/R, "
-           "fundamentals, day-trading rules. Idempotent — safe to re-run.")
-
-if st.button("Re-run Seed Ingestion", width="content"):
-    with st.status("Re-seeding…", expanded=True) as s:
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-X", "utf8", "-m", "knowledge_ingestion.seed_strategies"],
-                cwd=str(ROOT), capture_output=True, text=True, timeout=300,
-            )
-            out = (proc.stdout or "") + (proc.stderr or "")
-            st.code(out[-3000:], language="text")
-            if proc.returncode == 0:
-                s.update(label="Seed complete", state="complete", expanded=False)
-            else:
-                s.update(label=f"Failed (exit {proc.returncode})", state="error")
-        except Exception as exc:
-            s.update(label=f"{exc}", state="error")
-
-with st.expander("What's inside the seeded playbooks?"):
-    st.markdown("""
-1. **RSI Playbook** — oversold/overbought rules, divergence, crypto adjustments.
-2. **MACD Playbook** — crossovers, histogram momentum, signal-line strategy.
-3. **Golden Cross & Death Cross** — phases of each regime, signal bars.
-4. **Candlestick & Chart Patterns** — Hammer, Engulfing, H&S, triangles, flags.
-5. **Support, Resistance & Trendlines** — level identification, bounces, breakouts.
-6. **Fundamental Analysis** — P/E, PEG, FCF, earnings, macro (Fed/CPI/NFP), sector rotation.
-7. **Day Trading Rules & Psychology** — 1% rule, Kelly, drawdown limits, daily workflow.
-    """)
+    with st.expander("What's inside the seeded playbooks?"):
+        st.markdown("""
+    1. **RSI Playbook** — oversold/overbought rules, divergence, crypto adjustments.
+    2. **MACD Playbook** — crossovers, histogram momentum, signal-line strategy.
+    3. **Golden Cross & Death Cross** — phases of each regime, signal bars.
+    4. **Candlestick & Chart Patterns** — Hammer, Engulfing, H&S, triangles, flags.
+    5. **Support, Resistance & Trendlines** — level identification, bounces, breakouts.
+    6. **Fundamental Analysis** — P/E, PEG, FCF, earnings, macro (Fed/CPI/NFP), sector rotation.
+    7. **Day Trading Rules & Psychology** — 1% rule, Kelly, drawdown limits, daily workflow.
+        """)

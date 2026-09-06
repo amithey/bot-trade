@@ -227,31 +227,22 @@ def account_slug(ident: Optional[str] = None) -> str:
 # --------------------------------------------------------------------------- #
 _LOGIN_CSS = """
 <style>
-.bt-login-wrap { display:flex; align-items:center; justify-content:center;
-                 min-height:60vh; }
-.bt-login-card { background:linear-gradient(180deg,#0b0f14,#06090c);
-                 border:1px solid #202833; border-top:1px solid #34404f;
-                 border-radius:3px; padding:2rem 2.2rem 1.8rem;
-                 min-width:360px; position:relative; overflow:hidden; }
-/* A single amber edge along the top — the same accent line every panel in
-   the app carries, so this card reads as the app's front door rather than
-   a generic auth form bolted onto the side. */
-.bt-login-card::before {
-    content:""; position:absolute; top:0; left:0; right:0; height:2px;
-    background:linear-gradient(90deg, transparent, #ffab2e, transparent);
+.st-key-bt_login_card {
+    background:#1e222d; border:1px solid #2a2e39; border-radius:6px;
+    padding:2rem; margin-top:2rem; width:100%; min-width:0;
 }
 .bt-login-mark { width:40px; height:40px; border-radius:3px;
-                 background:linear-gradient(145deg,rgba(255,171,46,.22),rgba(47,191,113,.14));
-                 border:1px solid rgba(255,171,46,.4);
+                 background:#2962ff;
+                 border:1px solid #2962ff;
                  display:flex; align-items:center; justify-content:center;
-                 font-family:var(--font-mono,'JetBrains Mono',monospace);
+                 font-family:var(--font-ui,'Segoe UI',sans-serif);
                  color:#fff; font-weight:900; font-size:.9rem;
                  margin:0 0 1.1rem 0; }
 .bt-login-title { color:#fff; font-family:var(--font-ui,'Inter','Segoe UI',sans-serif);
-                  font-weight:850; font-size:1.25rem; letter-spacing:.14em;
+                  font-weight:700; font-size:1.7rem; letter-spacing:-.02em;
                   text-transform:uppercase; margin:0 0 .5rem 0; }
-.bt-login-sub { color:#8b98a8; font-family:var(--font-mono,'JetBrains Mono',monospace);
-                font-size:.7rem; letter-spacing:.06em; line-height:1.7;
+.bt-login-sub { color:#8b98a8; font-family:var(--font-ui,'Segoe UI',sans-serif);
+                font-size:.9rem; letter-spacing:0; line-height:1.6;
                 margin:0 0 1.4rem 0; }
 /* A live status line — the same heartbeat language the running dashboard
    uses elsewhere — so the door to the app signals "this is a live system"
@@ -267,7 +258,7 @@ _LOGIN_CSS = """
                          background:#00c176;
                          animation:bt-login-pulse 1.6s ease-in-out infinite; }
 .bt-login-status .txt { color:#5a7a98;
-                         font-family:var(--font-mono,'JetBrains Mono',monospace);
+                         font-family:var(--font-ui,'Segoe UI',sans-serif);
                          font-size:.62rem; letter-spacing:.14em;
                          text-transform:uppercase; }
 .bt-login-legal { margin-top:.9rem; text-align:center;
@@ -314,9 +305,7 @@ def require_login() -> None:
 
     st.markdown(_LOGIN_CSS, unsafe_allow_html=True)
     _, mid, _ = st.columns([1, 2, 1])
-    with mid:
-        st.markdown('<div class="bt-login-wrap"><div class="bt-login-card">',
-                    unsafe_allow_html=True)
+    with mid, st.container(key="bt_login_card"):
         st.markdown('<div class="bt-login-mark">BT</div>',
                     unsafe_allow_html=True)
         st.markdown('<div class="bt-login-title">BotTrade</div>',
@@ -369,7 +358,6 @@ def require_login() -> None:
             '</div>',
             unsafe_allow_html=True,
         )
-        st.markdown('</div></div>', unsafe_allow_html=True)
     st.stop()
 
 
@@ -386,9 +374,7 @@ def _render_accounts_card() -> None:
 
     st.markdown(_LOGIN_CSS, unsafe_allow_html=True)
     _, mid, _ = st.columns([1, 2, 1])
-    with mid:
-        st.markdown('<div class="bt-login-wrap"><div class="bt-login-card">',
-                    unsafe_allow_html=True)
+    with mid, st.container(key="bt_login_card"):
         st.markdown('<div class="bt-login-mark">BT</div>',
                     unsafe_allow_html=True)
         st.markdown('<div class="bt-login-title">BotTrade</div>',
@@ -414,7 +400,6 @@ def _render_accounts_card() -> None:
             '</div>',
             unsafe_allow_html=True,
         )
-        st.markdown('</div></div>', unsafe_allow_html=True)
 
 
 def render_account_chip() -> None:

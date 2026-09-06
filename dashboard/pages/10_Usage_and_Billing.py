@@ -31,14 +31,12 @@ from saas.pricing import cost_usd, format_usd, format_usd_md
 from trading.registry import get_registry
 
 st.set_page_config(page_title="BotTrade - Usage", page_icon=":material/receipt_long:",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 
-st.markdown('<div class="page-title">USAGE &amp; BILLING</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="page-sub">Every Claude call this bot made, priced and attributed'
-    '</div>', unsafe_allow_html=True)
+from dashboard.components import page_header
+page_header('Usage & billing', 'Track usage, API costs and subscription allowances.', section='Account / Subscription')
 
 tenant = get_tenant()
 ent = tenant.entitlement
@@ -155,7 +153,7 @@ def _render_breakdown(rows: list[dict], label_col: str) -> None:
         xaxis=dict(gridcolor=GRID, title="USD", zerolinecolor=GRID),
         yaxis=dict(gridcolor=GRID, autorange="reversed"),
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, theme=None, width="stretch")
     df["Cost"] = df["Cost"].map(format_usd)
     st.dataframe(df, width="stretch", hide_index=True)
 

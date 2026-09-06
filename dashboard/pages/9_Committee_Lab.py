@@ -26,12 +26,8 @@ st.set_page_config(page_title="Committee Lab", layout="wide",
                    page_icon=":material/how_to_vote:")
 secure_page()
 
-st.markdown('<div class="page-title">🗳 Committee Lab</div>',
-            unsafe_allow_html=True)
-st.markdown(
-    '<div class="page-sub">38 indicators · one vote per window · long-only, '
-    'exits to cash · crypto &amp; stocks · zero API cost</div>',
-    unsafe_allow_html=True)
+from dashboard.components import page_header
+page_header('Strategy tester', 'Backtest the technical committee and compare strategy parameters.', section='Lab / Historical simulation')
 
 # ── Controls ────────────────────────────────────────────────────────────────
 c1, c2, c3, c4, c5, c6 = st.columns([1.8, 1.1, 1.3, 1.3, 1.3, 1.0],
@@ -145,8 +141,8 @@ if grid:
                        "fitness %{z:.1f}<extra></extra>"),
     ))
     heat.update_layout(
-        template="plotly_dark", height=300,
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#020406",
+        template="bottrade", height=300,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#131722",
         margin=dict(l=12, r=12, t=26, b=12),
         title=dict(text="Risk-adjusted fitness by entry / exit margin",
                    font=dict(size=12, color=TEXT_DIM)),
@@ -268,8 +264,8 @@ fig.add_trace(go.Scatter(
 
 is_crypto = "-USD" in res.ticker.upper()
 fig.update_layout(
-    template="plotly_dark", height=680,
-    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#020406",
+    template="bottrade", height=680,
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#131722",
     margin=dict(l=12, r=54, t=28, b=12),
     hovermode="x unified",
     font=dict(family="Inter, Segoe UI, sans-serif", size=11, color=TEXT),
@@ -285,7 +281,7 @@ fig.update_layout(
 for ann in fig.layout.annotations:
     ann.font.size = 10
     ann.font.color = TEXT_DIM
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig, theme=None, width="stretch")
 
 # ── Trades table ────────────────────────────────────────────────────────────
 closed = [t for t in res.trades if t.exit_time is not None]

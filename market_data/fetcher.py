@@ -110,6 +110,14 @@ class FundamentalsData:
     currency:       Optional[str]
     fetched_at:     datetime = field(default_factory=datetime.utcnow)
 
+    revenue_growth: Optional[float] = None
+    earnings_growth: Optional[float] = None
+    profit_margin: Optional[float] = None
+    operating_margin: Optional[float] = None
+    return_on_equity: Optional[float] = None
+    free_cash_flow: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+
     @property
     def pe_discount_to_52w_high(self) -> Optional[float]:
         """Current price discount from 52-week high (requires week_52_high)."""
@@ -125,6 +133,13 @@ class FundamentalsData:
             return v
 
         return {
+            "Revenue Growth (ratio)": _fmt(self.revenue_growth),
+            "Earnings Growth (ratio)": _fmt(self.earnings_growth),
+            "Profit Margin (ratio)": _fmt(self.profit_margin),
+            "Operating Margin (ratio)": _fmt(self.operating_margin),
+            "Return on Equity (ratio)": _fmt(self.return_on_equity),
+            "Free Cash Flow": _fmt(self.free_cash_flow),
+            "Debt / Equity (%)": _fmt(self.debt_to_equity),
             "P/E (Trailing)":  _fmt(self.pe_trailing),
             "P/E (Forward)":   _fmt(self.pe_forward),
             "Market Cap":      f"${self.market_cap:,}" if self.market_cap else "N/A",
@@ -448,15 +463,16 @@ class MarketDataFetcher:
         def _float(key: str) -> Optional[float]:
             val = info.get(key)
             try:
-                return float(val) if val is not None else None
-            except (TypeError, ValueError):
+                number = float(val) if val is not None else None
+                return number if number is not None and np.isfinite(number) else None
+            except (TypeError, ValueError, OverflowError):
                 return None
 
         def _int(key: str) -> Optional[int]:
             val = info.get(key)
             try:
                 return int(val) if val is not None else None
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return None
 
         def _str(key: str) -> Optional[str]:
@@ -464,6 +480,13 @@ class MarketDataFetcher:
             return str(val).strip() if val else None
 
         fundamentals = FundamentalsData(
+            revenue_growth=_float("revenueGrowth"),
+            earnings_growth=_float("earningsGrowth"),
+            profit_margin=_float("profitMargins"),
+            operating_margin=_float("operatingMargins"),
+            return_on_equity=_float("returnOnEquity"),
+            free_cash_flow=_float("freeCashflow"),
+            debt_to_equity=_float("debtToEquity"),
             pe_trailing=    _float("trailingPE"),
             pe_forward=     _float("forwardPE"),
             market_cap=     _int("marketCap"),

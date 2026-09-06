@@ -8,6 +8,7 @@ Enforces stop-loss / take-profit / daily-loss risk controls automatically.
 from __future__ import annotations
 
 import queue
+import math
 import threading
 import time
 import traceback
@@ -1094,6 +1095,10 @@ class LiveTradingEngine:
                        level="ERROR")
             return
 
+        if not math.isfinite(price) or price <= 0:
+            self._emit(PulseStage.ERROR, "Invalid market price — cycle skipped", level="ERROR")
+            return
+
         with self._lock:
             self._last_price = price
             self._last_snapshot_df = snap.data
@@ -1512,7 +1517,8 @@ class LiveTradingEngine:
             # Confidence gate — per-profile threshold
             from config.user_profile import RISK_ENVELOPES
             env = RISK_ENVELOPES.get(risk_profile, RISK_ENVELOPES["Balanced"])
-            if decision.confidence_score < env.conf_threshold:
+            if (not math.isfinite(decision.confidence_score)
+                    or not env.conf_threshold <= decision.confidence_score <= 1):
                 self._emit(PulseStage.EXECUTE,
                            f"BUY gated — confidence "
                            f"{decision.confidence_score:.0%} < threshold "
@@ -1528,43 +1534,25 @@ class LiveTradingEngine:
                            level="INFO")
                 return
 
-            # Final position size: AI suggestion clamped to envelope, fallback
-            # to user's ceiling when AI didn't provide one.
-            ai_sugg = decision.suggested_position_size_pct
-            if ai_sugg is None:
-                chosen = min(trade_size_pct, env.size_max_pct)
-            else:
-                chosen = max(env.size_min_pct,
-                             min(env.size_max_pct, float(ai_sugg)))
-            # Also respect the user's global ceiling from the top-bar
-            chosen = min(chosen, trade_size_pct)
-
-            if already_held:
-                # Pyramiding: only add if we have at least env.size_min_pct
-                # headroom left in cash; otherwise skip.
-                available_pct = (self.portfolio.cash
-                                 / max(1.0, self.portfolio.get_total_value())
-                                 * 100.0)
-                if available_pct < env.size_min_pct:
-                    self._emit(PulseStage.EXECUTE,
-                               f"Pyramid skipped — cash too low "
-                               f"({available_pct:.1f}%)", level="INFO")
-                    return
-
-            cash_to_use = self.portfolio.get_total_value() * (chosen / 100.0)
-
-            # Position-size sanity check — never overshoot cash
-            from risk.safety import SafetyController as _SC
-            ok, why = _SC.validate_buy_size(
-                cash_to_use, self.portfolio.cash, self.portfolio.fee_rate,
+            from risk.sizing import allocate_buy
+            position = self.portfolio.positions.get(ticker)
+            if position is not None and position.unrealized_pnl <= 0:
+                self._emit(PulseStage.RISK, "Pyramid skipped — only add to winners",
+                           level="INFO")
+                return
+            allocation = allocate_buy(
+                equity=self.portfolio.get_total_value(), cash=self.portfolio.cash,
+                existing_value=position.market_value if position else 0.,
+                user_cap_pct=trade_size_pct, profile_cap_pct=env.size_max_pct,
+                suggested_pct=decision.suggested_position_size_pct,
+                fee_rate=self.portfolio.fee_rate,
             )
-            if not ok:
-                self._emit(PulseStage.RISK,
-                           f"BUY size sanity failed: {why}", level="WARN")
-                # Trim to a safe amount instead of failing entirely
-                cash_to_use = self.portfolio.cash / (1.0 + self.portfolio.fee_rate)
-                if cash_to_use <= 0:
-                    return
+            if allocation.cash_amount <= 0:
+                self._emit(PulseStage.RISK, f"BUY blocked — {allocation.reason}",
+                           level="WARN")
+                return
+            cash_to_use = allocation.cash_amount
+            chosen = allocation.equity_pct
 
             buy_px = _fill_price("BUY")
             try:

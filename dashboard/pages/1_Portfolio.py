@@ -21,15 +21,15 @@ from dashboard._shared import (
 )
 
 st.set_page_config(page_title="BotTrade - Portfolio", page_icon=":material/account_balance:", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="auto")
 secure_page()
 ensure_profile_in_session()
 ensure_portfolio_in_session()
 ensure_logs_in_session()
 pump_toasts()
 
-st.markdown('<div class="page-title">PORTFOLIO</div>', unsafe_allow_html=True)
-st.markdown('<div class="page-sub">Equity, trade history, and performance stats</div>', unsafe_allow_html=True)
+from dashboard.components import page_header
+page_header('Portfolio', 'Positions, realized returns and account risk in one workspace.', section='Trade / Account overview')
 
 port = st.session_state["portfolio"]
 summ = port.get_summary()
@@ -54,7 +54,7 @@ k3.metric("Cash", f"${summ['cash']:,.2f}")
 k4.metric("Win Rate", f"{win_rate:.0f}%" if closed else "—",
           f"{len(wins)}W / {len(losses)}L" if closed else None)
 k5.metric("Avg Win / Loss",
-          f"${avg_win:+,.0f} / ${avg_loss:+,.0f}" if closed else "—")
+          f"\\${avg_win:+,.0f} / \\${avg_loss:+,.0f}" if closed else "—")
 k6.metric("Profit Factor",
           f"{profit_factor:.2f}" if closed and losses else ("∞" if wins else "—"))
 
@@ -169,16 +169,16 @@ if port.trade_log:
     ))
     fig.add_hline(y=0, line=dict(color="#2a4060", dash="dot", width=1))
     fig.update_layout(
-        template="plotly_dark", height=320,
+        template="bottrade", height=320,
         paper_bgcolor=BG, plot_bgcolor=BG,
         margin=dict(l=10, r=30, t=10, b=10),
-        font=dict(family="Courier New, monospace", size=11),
+        font=dict(family="Inter, Segoe UI, sans-serif", size=11),
         xaxis=dict(showgrid=True, gridcolor=GRID),
         yaxis=dict(title="Cumulative P&L ($)", side="right",
                    showgrid=True, gridcolor=GRID),
         showlegend=False,
     )
-    st.plotly_chart(fig, width="stretch", key="equity_curve")
+    st.plotly_chart(fig, theme=None, width="stretch", key="equity_curve")
 else:
     st.caption("No realised trades yet. Equity curve will appear after the first SELL.")
 
@@ -238,7 +238,7 @@ with col_left:
                                    range=[s_min * 0.998, s_max * 1.002]),
                         showlegend=False,
                     )
-                    st.plotly_chart(fig_s, width="stretch",
+                    st.plotly_chart(fig_s, theme=None, width="stretch",
                                     key=f"sp_{p['ticker']}",
                                     config={"displayModeBar": False})
                 else:

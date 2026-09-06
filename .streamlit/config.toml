@@ -38,8 +38,8 @@ level = "info"
 # =============================================================================
 [theme]
 base             = "dark"
-primaryColor     = "#58a6ff"
-backgroundColor  = "#0d1117"
-secondaryBackgroundColor = "#161b22"
-textColor        = "#f0f6fc"
+primaryColor     = "#2962ff"
+backgroundColor  = "#131722"
+secondaryBackgroundColor = "#1e222d"
+textColor        = "#d1d4dc"
 font             = "sans serif"
