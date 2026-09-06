@@ -68,6 +68,13 @@ paddle-python-sdk==1.15.0
 # it the app runs in open or shared-password mode. See DEPLOY.md section 2b.
 Authlib==1.7.2
 
+# Cookie read/write for the built-in email+password accounts
+# (AUTH_ACCOUNTS_ENABLED=true). Streamlit's own st.context.cookies is
+# a read-only mapping and app code has no first-party way to *set* a cookie,
+# so keeping someone signed in across a page refresh needs a component. Only
+# dashboard/_accounts.py imports it, so replacing it later is a one-file job.
+extra-streamlit-components==0.1.81
+
 # --- Web dashboard ------------------------------------------------------------
 # streamlit must be >=1.42 for st.login / st.user (native OIDC), which
 # dashboard/_identity.py depends on. Pinned to the tested version.

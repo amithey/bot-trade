@@ -58,6 +58,13 @@ data/usage.db
 data/usage.db-shm
 data/usage.db-wal
 
+# Accounts and live sessions (saas.user_accounts). The single most sensitive
+# file this project writes: password hashes and session-token digests for
+# real people. Never commit, and never copy off a production volume.
+data/users.db
+data/users.db-shm
+data/users.db-wal
+
 # Streamlit secrets — holds the OIDC client_secret and cookie_secret.
 # Never commit. See DEPLOY.md for the [auth] block it must contain.
 .streamlit/secrets.toml

@@ -170,6 +170,16 @@ class Settings(BaseSettings):
                     "for Stripe before and for fundamentals/news in "
                     "market_data/; see saas/billing.py.",
     )
+    #: Turns on the built-in email + password account system
+    #: (:mod:`saas.user_accounts`). Off by default: a deployment that has
+    #: not deliberately opted in should not suddenly start offering account
+    #: registration to anyone who finds the URL. When on it takes precedence
+    #: over OIDC, so a deployment picks one front door rather than showing
+    #: two competing ones.
+    auth_accounts_enabled: bool = Field(
+        default=False,
+        description="Enable built-in email/password accounts instead of OIDC.",
+    )
     bottrade_base_url: str = Field(
         default="http://localhost:8501",
         description="Public URL this dashboard is reachable at. Used to build "
