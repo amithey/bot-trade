@@ -91,8 +91,22 @@ def password_gate_enabled() -> bool:
     return bool(os.environ.get("BOTTRADE_AUTH_PASSWORD_HASH", "").strip())
 
 
+def accounts_enabled() -> bool:
+    """True when the built-in email/password account system is switched on."""
+    from dashboard import _accounts
+    return _accounts.enabled()
+
+
 def auth_mode() -> str:
-    """``"oidc"`` | ``"password"`` | ``"open"``."""
+    """``"accounts"`` | ``"oidc"`` | ``"password"`` | ``"open"``.
+
+    ``accounts`` deliberately outranks ``oidc``: a deployment that has turned
+    on its own account system has chosen a front door, and showing a Google
+    button beside it would fork identity in two — the same person would end
+    up with one account per route in.
+    """
+    if accounts_enabled():
+        return "accounts"
     if oidc_configured():
         return "oidc"
     if password_gate_enabled():
@@ -106,7 +120,7 @@ def identifies_individuals() -> bool:
     The free-tier budget is only enforceable when this is True — everything
     else shares one account, so one user's spend is everyone's spend.
     """
-    return auth_mode() == "oidc"
+    return auth_mode() in ("oidc", "accounts")
 
 
 # --------------------------------------------------------------------------- #
@@ -140,6 +154,9 @@ def current_user() -> dict:
 def display_name() -> str:
     """Something short to show in the sidebar."""
     mode = auth_mode()
+    if mode == "accounts":
+        from dashboard import _accounts
+        return _accounts.current_email() or "Signed in"
     if mode == "oidc":
         u = current_user()
         return u.get("name") or u.get("email") or "Signed in"
@@ -160,6 +177,15 @@ def account_id() -> str:
         return cached
 
     mode = auth_mode()
+    if mode == "accounts":
+        from dashboard import _accounts
+        email = _accounts.current_email()
+        # Same ``user:<email>`` shape OIDC produces, so a portfolio, profile,
+        # ledger row or Paddle customer created under one mode is found
+        # unchanged under the other.
+        ident = f"user:{email}" if email else "user:unknown"
+        st.session_state[_ID_SLOT] = ident
+        return ident
     if mode == "oidc":
         u = current_user()
         email = (u.get("email") or "").strip().lower()
@@ -273,6 +299,16 @@ def require_login() -> None:
         require_auth()
         return
 
+    if mode == "accounts":
+        from dashboard import _accounts
+        # Any queued cookie write happens on a run that is allowed to finish;
+        # reading the cookie needs nothing but st.context.
+        _accounts.flush_cookie_writes()
+        if _accounts.is_signed_in():
+            return
+        _render_accounts_card()
+        st.stop()
+
     if mode != "oidc" or is_logged_in():
         return
 
@@ -337,6 +373,50 @@ def require_login() -> None:
     st.stop()
 
 
+def _render_accounts_card() -> None:
+    """The email + password front door, in the same card as the OIDC one.
+
+    Kept visually identical to the OIDC gate on purpose: which sign-in
+    mechanism a deployment happens to use is not something a visitor should
+    have to notice, and the legal links below are required on whatever page
+    an unauthenticated visitor lands on — Paddle's domain check looks for
+    them, and in this mode this card is that page.
+    """
+    from dashboard import _accounts
+
+    st.markdown(_LOGIN_CSS, unsafe_allow_html=True)
+    _, mid, _ = st.columns([1, 2, 1])
+    with mid:
+        st.markdown('<div class="bt-login-wrap"><div class="bt-login-card">',
+                    unsafe_allow_html=True)
+        st.markdown('<div class="bt-login-mark">BT</div>',
+                    unsafe_allow_html=True)
+        st.markdown('<div class="bt-login-title">BotTrade</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            '<div class="bt-login-sub">Sign in to keep your portfolio, '
+            'watchlist and API key settings across sessions.</div>',
+            unsafe_allow_html=True,
+        )
+
+        _accounts.render_forms()
+
+        st.markdown(
+            '<div class="bt-login-status"><span class="dot"></span>'
+            '<span class="txt">System online</span></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="bt-login-legal">'
+            '<a href="https://bottrade-ten.vercel.app/terms.html" target="_blank">Terms of Service</a> · '
+            '<a href="https://bottrade-ten.vercel.app/privacy.html" target="_blank">Privacy Policy</a> · '
+            '<a href="https://bottrade-ten.vercel.app/refunds.html" target="_blank">Refund Policy</a>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('</div></div>', unsafe_allow_html=True)
+
+
 def render_account_chip() -> None:
     """Sidebar identity block with a sign-out control."""
     mode = auth_mode()
@@ -345,7 +425,15 @@ def render_account_chip() -> None:
 
     with st.sidebar:
         st.markdown("---")
-        if mode == "oidc" and is_logged_in():
+        if mode == "accounts":
+            from dashboard import _accounts
+            st.caption(f"Signed in as **{display_name()}**")
+            if st.button("Sign out", width="stretch",
+                         key="_bt_signout_accounts"):
+                _accounts.sign_out()
+                forget_identity()
+                st.rerun()
+        elif mode == "oidc" and is_logged_in():
             st.caption(f"Signed in as **{display_name()}**")
             if st.button("Sign out", width="stretch",
                          key="_bt_signout"):

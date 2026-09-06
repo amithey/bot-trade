@@ -32,23 +32,29 @@ Configuration
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import os
 import re
-import secrets
 import threading
 import time
 
 import streamlit as st
 
+from saas.passwords import (
+    PBKDF2_ITERATIONS,
+    PBKDF2_PREFIX,
+    hash_password,
+)
+from saas.passwords import verify_password as _verify_pbkdf2
+
 _SESSION_KEY = "_bt_authed"
 
-#: OWASP-recommended floor for PBKDF2-HMAC-SHA256. Raise it, never lower it —
-#: the value is stored in the hash, so old hashes keep verifying either way.
-_PBKDF2_ITERATIONS = 600_000
-_PBKDF2_PREFIX = "pbkdf2_sha256"
+#: Re-exported from :mod:`saas.passwords`, which owns the one implementation
+#: of PBKDF2 hashing this project has. Kept as module-level names because
+#: tests and callers already reference them here.
+_PBKDF2_ITERATIONS = PBKDF2_ITERATIONS
+_PBKDF2_PREFIX = PBKDF2_PREFIX
 _LEGACY_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 #: Failed attempts are counted per process, not per session. A session-scoped
@@ -67,13 +73,7 @@ _locked_until = 0.0
 # --------------------------------------------------------------------------- #
 def make_hash(password: str, iterations: int = _PBKDF2_ITERATIONS) -> str:
     """Derive a storable hash for *password*, with a fresh random salt."""
-    salt = secrets.token_bytes(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return "${}${}${}".format(
-        _PBKDF2_PREFIX + f"${iterations}",
-        base64.b64encode(salt).decode("ascii"),
-        base64.b64encode(dk).decode("ascii"),
-    ).lstrip("$")
+    return hash_password(password, iterations=iterations)
 
 
 def _expected_hash() -> str:
@@ -101,15 +101,7 @@ def verify_password(password: str, stored: str | None = None) -> bool:
         return False
 
     if expected.startswith(_PBKDF2_PREFIX + "$"):
-        try:
-            _, iterations, b64_salt, b64_dk = expected.split("$", 3)
-            salt = base64.b64decode(b64_salt)
-            want = base64.b64decode(b64_dk)
-            got = hashlib.pbkdf2_hmac(
-                "sha256", password.encode("utf-8"), salt, int(iterations))
-        except (ValueError, TypeError):
-            return False
-        return hmac.compare_digest(got, want)
+        return _verify_pbkdf2(password, expected)
 
     if hash_is_legacy(expected):
         got = hashlib.sha256(
