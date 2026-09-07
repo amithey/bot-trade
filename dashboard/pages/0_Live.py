@@ -29,14 +29,10 @@ from streamlit_autorefresh import st_autorefresh
 from dashboard._shared import (
     BG_DEEP, BORDER, C_BUY, C_HOLD, C_SELL, CUSTOM_LABEL, CYAN,
     DEFAULT_TICKERS, GRID, RISK_CHOICES, TEXT, TEXT_DIM, TEXT_HI,
-    account_id as _account_id,
     secure_page, ensure_event_buffer, ensure_portfolio_in_session,
     ensure_profile_in_session, engine_capacity_message, get_live_engine,
-    get_tenant, pump_events, save_portfolio, save_profile,
+    get_tenant, pump_events, save_profile,
 )
-from saas.plans import Funding as _Funding
-from saas.pricing import format_usd as _fmt_usd
-from saas.pricing import format_usd_md as _fmt_usd_md
 from utils.market_logic import get_market_status
 
 # Install crash reporter once per process — captures uncaught exceptions
@@ -144,91 +140,22 @@ _fund_class = "badge-green" if _tenant_state.get("funding") == "BYOK" \
 st.markdown(
     f'<div class="bt-brand">'
     f'<div style="display:flex;align-items:center;gap:.8rem;">'
-    f'<div class="bt-brand-mark">BT</div>'
-    f'<div><div class="bt-brand-title">Trading terminal</div>'
-    f'<div class="bt-brand-sub">Your market, strategy and execution — in one view.</div></div>'
+    f'<div><div class="bt-brand-title">Your investment agent</div>'
+    f'<div class="bt-brand-sub">A clear view of your capital. A reason behind every decision.</div></div>'
     f'</div>'
     f'<div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end;">'
-    f'<span class="badge badge-blue">{_html.escape(_plan_badge)} plan</span>'
-    f'<span class="badge {_fund_class}">{_html.escape(_fund_badge)}</span>'
     f'<span class="badge badge-gray">Paper execution</span>'
     f'</div>'
     f'</div>',
     unsafe_allow_html=True,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ██  SIDEBAR — strategy guide
-# ─────────────────────────────────────────────────────────────────────────────
-with st.sidebar:
-    with st.expander("📖 Strategy Guide — which one to pick?",
-                     expanded=False):
-        st.markdown("""
-**🧠 AI Brain** — Claude reads the chart, your knowledge base (RAG),
-news and fundamentals, and decides alone each cycle.
-*Smartest single opinion, but can act on one bad read.*
-1 API call/cycle.
-
-**🗳 Committee ×38** — 38 technical indicators vote; bull majority
-buys, bear majority exits to cash. No AI, no panic sells, fully
-deterministic and backtestable in the 🗳 Committee Lab.
-*Best discipline, zero API cost — but blind to news.*
-
-**🤝 Hybrid** — the committee votes AND Claude reviews the tally.
-BUY needs both to agree; the AI can never panic-sell against a
-bullish committee. *Discipline + context check.* 1 call/cycle.
-
-**🪑 Boardroom ×8** — a full hedge-fund desk: chart, fundamentals,
-news, quant, macro, risk officer, volume-flow and a contrarian each
-study their own briefing in parallel, then a chairman makes the
-binding call. *Richest reasoning, most expensive.* ~9 calls/cycle —
-use 120s+ intervals.
-
----
-**Quick picks:**
-- Trust pure rules / run cheap → **Committee**
-- Balanced default → **Hybrid**
-- Maximum context before each trade → **Boardroom**
-- Test any setup risk-free first → **🗳 Committee Lab** page
-        """)
-
-    # Plan + spend at a glance. Anyone running the bot on their own API key
-    # should be able to see what it is costing them without hunting for it.
-    _side_tenant = get_tenant()
-    _side_ent = _side_tenant.entitlement
-    _side_usage = _side_tenant.usage()
-    st.markdown("---")
-    st.markdown(f"**Plan · {_side_ent.plan.name}**")
-    _sc1, _sc2 = st.columns(2)
-    _sc1.metric("This month", _fmt_usd(_side_usage["cost_usd"]))
-    _sc2.metric("Calls saved", f"{_side_usage['calls_saved']:,}",
-                help="Decisions reused from the shared cache instead of "
-                     "hitting the API.")
-    if _side_ent.funding is _Funding.PLATFORM:
-        st.caption(f"Trial credit left: "
-                   f"{_fmt_usd_md(_side_ent.platform_budget_remaining_usd)}")
-    elif _side_ent.funding is _Funding.BYOK:
-        st.caption("Running on your own API key.")
-    st.page_link("pages/10_Usage_and_Billing.py", label="Usage & billing",
-                 icon="🧾")
-    st.page_link("pages/2_Settings.py", label="Plan & API key", icon="🔑")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ██  PLAN CONTEXT — decides which strategy modes and intervals are offered
-# ─────────────────────────────────────────────────────────────────────────────
 _tenant = get_tenant()
 _plan_ent = _tenant.entitlement
 
-if not _plan_ent.llm_available:
-    with st.sidebar:
-        st.caption("Committee mode uses local indicators. Add an API key in Settings to enable AI analysis.")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ██  TOP CONTROL BAR  — single row, all columns share identical structure
-# ─────────────────────────────────────────────────────────────────────────────
-control_panel, c_start, c_reset = st.columns([6, 1, 1], gap="small")
+control_panel, strategy_hint, c_start, c_reset = st.columns([2, 4, 1.3, 1.3], gap="small")
 with control_panel:
-    with st.expander("Trading configuration", expanded=False):
+    with st.popover("Configure agent", width="stretch"):
         c_ticker, c_strategy, c_interval = st.columns([2, 2, 1], gap="small")
         c_cap, c_size, c_risk = st.columns(3, gap="small")
 
@@ -360,14 +287,17 @@ with control_panel:
             f"Minimum signal confidence {_active_envelope.conf_threshold:.0%}"
         )
 
+with strategy_hint:
+    st.caption(f"{ticker} · {risk}")
+
 with c_start:
     if engine.is_running():
-        if st.button("STOP", width="stretch",
+        if st.button("Pause agent", width="stretch",
                      help="Halt the live loop"):
             engine.stop()
             st.rerun()
     else:
-        if st.button("START", width="stretch", type="primary",
+        if st.button("Start agent", width="stretch", type="primary",
                      help="Begin live trading loop"):
             engine.set_config(
                 ticker=ticker,
@@ -380,18 +310,8 @@ with c_start:
             st.rerun()
 
 with c_reset:
-    if st.button("RESET", width="stretch", help="Reset portfolio"):
-        from portfolio.virtual_account import LivePortfolio
-        from trading.registry import get_registry
-        # Stop and drop the engine first: it holds a reference to the old
-        # portfolio and would otherwise keep checkpointing it back over the
-        # fresh one. get_live_engine() rebuilds on the next run.
-        get_registry().stop(_account_id())
-        fresh = LivePortfolio(
-            initial_capital=float(st.session_state["starting_capital"]))
-        st.session_state["portfolio"] = fresh
-        save_portfolio(fresh)
-        st.rerun()
+    from dashboard.appearance import fullscreen_control
+    fullscreen_control()
 
 # Keep engine config in sync with widgets + settings even while running
 engine.set_config(
@@ -459,16 +379,8 @@ _now_html = (f'<span style="color:{TEXT_DIM};font-size:.72rem;'
              f'font-family:monospace;">'
              f'{datetime.now().strftime("%H:%M:%S")}</span>')
 
-st.markdown(
-    f'<div class="bt-panel live-bar">'
-    f'<span class="pulse-dot {_dot_cls}"></span>'
-    f'<span class="stage-pill stage-{_stage}">{_stage}</span>'
-    f'<span style="color:{TEXT};font-weight:700;">{_html.escape(state["activity"])}</span>'
-    f'<span style="margin-left:auto;display:flex;gap:0.9rem;align-items:center;">'
-    f'{_halt_html}{_target_html}{_strat_badge}{_live_badge}{_mkt_badge}{_cycle_html}{_next_html}{_now_html}'
-    f'</span></div>',
-    unsafe_allow_html=True,
-)
+from dashboard.components import render_agent_summary
+render_agent_summary(state)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  KPI ROW
@@ -500,22 +412,11 @@ def _kpi(label: str, value: str, color: str = TEXT_HI,
 
 _kpi_strip = (
     f'<div class="kpi-strip">'
-    + _kpi(ticker, _price_str, CYAN)
-    + _kpi("Value", f"${summ['total_value']:,.2f}", TEXT_HI,
+    + _kpi("Portfolio value", f"${summ['total_value']:,.2f}", TEXT_HI,
            f"{_ret_pct:+.2f}%", _ret_col)
-    + _kpi("P&L", f"${total_pnl:+,.2f}", _pnl_col,
+    + _kpi("Total return", f"${total_pnl:+,.2f}", _pnl_col,
            f"R ${port.get_realized_pnl():+,.2f}")
-    + _kpi("Cash", f"${summ['cash']:,.2f}")
-    + _kpi("Trades", str(len(port.trade_log)), TEXT_HI,
-           f"{len(wins)}W/{len(losses)}L" if closed else "")
-    + _kpi("Win", f"{win_rate:.0f}%" if closed else "—", TEXT_HI,
-           f"{len(closed)} closed" if closed else "")
-    + (_kpi("Committee",
-            f"{state['last_committee']['score']:+.2f}",
-            C_BUY if state["last_committee"]["score"] >= 0 else C_SELL,
-            f"{state['last_committee']['bulls']}🐂 "
-            f"{state['last_committee']['bears']}🐻")
-       if state.get("last_committee") else "")
+    + _kpi("Available cash", f"${summ['cash']:,.2f}")
     + '</div>'
 )
 st.markdown(_kpi_strip, unsafe_allow_html=True)
@@ -526,13 +427,26 @@ st.markdown(_kpi_strip, unsafe_allow_html=True)
 from dashboard.charts import market_chart
 from dashboard.components import render_desk_sidebar, empty_workspace
 
-chart_column, context_column = st.columns([4.3, 1.25], gap="small")
+view_tools, study_tools = st.columns([4, 1], gap="small")
+with view_tools:
+    chart_window = st.segmented_control("Visible history", ["100 bars", "250 bars", "All"],
+                                       default="250 bars", key="chart_window", label_visibility="collapsed")
+with study_tools:
+    with st.popover("Chart options", width="stretch"):
+        chart_overlays = st.toggle("Moving averages & bands", value=True, key="chart_overlays")
+        chart_trades = st.toggle("Trade markers", value=True, key="chart_trades")
+        chart_focus = not st.toggle("Show market sidebar", value=False, key="show_market_sidebar")
+if chart_focus:
+    chart_column, context_column = st.container(), None
+else:
+    chart_column, context_column = st.columns([4.3, 1.25], gap="small")
 with chart_column:
     df = state.get("last_df")
     _last_bar = str(df.index[-1])[:19] if df is not None and len(df) else "Awaiting data"
     st.markdown(
         f'<div class="quote-bar"><span class="quote-symbol">{_html.escape(ticker)}</span>'
-        f'<span class="quote-detail">Candles · Volume · RSI · MACD</span>'
+        f'<span class="quote-symbol">{_html.escape(_price_str)}</span>'
+        f'<span class="quote-detail">Market chart</span>'
         f'<span class="quote-detail" style="margin-left:auto">Last bar: {_html.escape(_last_bar)}</span></div>',
         unsafe_allow_html=True,
     )
@@ -544,105 +458,46 @@ with chart_column:
             "Choose a symbol and strategy, then start the bot to see candles, indicators and trade signals.",
         )
     else:
-        fig = market_chart(df, ticker, port.trade_log)
+        chart_data = df if chart_window == "All" else df.tail(100 if chart_window == "100 bars" else 250)
+        fig = market_chart(chart_data, ticker, port.trade_log,
+                           overlays=chart_overlays, show_trades=chart_trades)
+        fig.update_layout(uirevision=f"{ticker}:{chart_window}", height=720 if chart_focus else 620)
         st.plotly_chart(fig, theme=None, width="stretch", key="main_chart",
                         config={"displaylogo": False, "scrollZoom": True,
-                                "modeBarButtonsToRemove": ["lasso2d", "select2d"]})
-with context_column:
-    render_desk_sidebar(state, port, st.session_state.get("watchlist") or DEFAULT_TICKERS,
-                        risk=risk, cap_pct=min(ts, _active_envelope.size_max_pct))
+                                "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+                                "modeBarButtonsToAdd": ["drawline", "drawrect", "eraseshape"]})
+if context_column is not None:
+    with context_column:
+        render_desk_sidebar(state, port, st.session_state.get("watchlist") or DEFAULT_TICKERS,
+                            risk=risk, cap_pct=min(ts, _active_envelope.size_max_pct))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  BOTTOM TABS — Decision · Positions · Trades · Events
 # ─────────────────────────────────────────────────────────────────────────────
-tab_research, tab_dec, tab_board, tab_com, tab_eq, tab_pos, tab_tr, tab_log = st.tabs(
-    ["Entry research", "Decision", "Analyst desk", "Technical signals", "Equity", "Positions",
-     "Orders & trades", "Activity log"]
-)
-
-with tab_research:
-    from dashboard.components import render_entry_research
-    render_entry_research(state.get("last_research"))
+tab_insight, tab_holdings, tab_activity = st.tabs(["Agent insight", "Portfolio details", "Activity"])
+tab_research = tab_dec = tab_board = tab_com = tab_insight
+tab_eq = tab_pos = tab_tr = tab_holdings
+tab_log = tab_activity
 
 with tab_dec:
     dec = state.get("last_decision")
-    _dec_title = {
-        "COMMITTEE": "COMMITTEE DECISION",
-        "HYBRID":    "HYBRID DECISION",
-        "BOARDROOM": "CHAIRMAN'S RULING",
-    }.get(state.get("strategy_mode"), "AI DECISION")
-    if dec is not None:
-        act_cls = {"BUY": "sig-buy", "SELL": "sig-sell",
-                   "HOLD": "sig-hold"}.get(dec.action, "sig-hold")
-        conf_pct = int(dec.confidence_score * 100)
-        conf_color = {"BUY": C_BUY, "SELL": C_SELL,
-                      "HOLD": C_HOLD}.get(dec.action, C_HOLD)
-        sl = f"{dec.suggested_stop_loss_pct:.1f}%" \
-             if dec.suggested_stop_loss_pct else "—"
-        tp = f"{dec.suggested_take_profit_pct:.1f}%" \
-             if dec.suggested_take_profit_pct else "—"
-        attr_score = int(getattr(dec, "attractiveness_score", 0.0) * 100)
-        attr_label = getattr(dec, "attractiveness_label", "NEUTRAL")
-        outlook = getattr(dec, "price_outlook", "UNKNOWN")
-        chips = "".join(
-            f'<span style="display:inline-block;background:#1e222d;'
-            f'border:1px solid #2a2e39;border-radius:3px;padding:1px 7px;'
-            f'margin:1px 2px;font-size:.64rem;color:#9598a1;">'
-            f'{_html.escape(i.replace("_"," ").title()[:24])}</span>'
-            for i in (dec.key_indicators or [])[:5]
-        ) or f'<span style="color:#2a4050;font-size:.66rem;">—</span>'
-        reasoning = _html.escape(dec.reasoning).replace("\n", "<br>")
-
-        st.markdown(
-            f'<div class="bt-panel">'
-            f'<div class="bt-section-title">{_dec_title}</div>'
-            f'<div style="display:flex;align-items:center;gap:1rem;margin-bottom:.5rem;">'
-            f'<div class="{act_cls}" style="font-size:1.9rem;font-weight:900;">'
-            f'{dec.action}</div>'
-            f'<div style="flex:1;">'
-            f'<div style="color:{TEXT_DIM};font-size:.6rem;letter-spacing:.12em;'
-            f'text-transform:uppercase;">Signal strength (not win probability)</div>'
-            f'<div style="background:#131722;border:1px solid #2a2e39;'
-            f'border-radius:3px;height:6px;overflow:hidden;margin-top:3px;">'
-            f'<div style="height:6px;width:{conf_pct}%;background:{conf_color};"></div>'
-            f'</div>'
-            f'<div style="color:{TEXT};font-size:.72rem;margin-top:2px;">{conf_pct}%</div>'
-            f'</div>'
-            f'</div>'
-            f'<div style="display:flex;gap:.6rem;font-size:.68rem;margin-bottom:.5rem;">'
-            f'<span style="color:{TEXT_DIM};">RISK</span>'
-            f'<span style="color:{TEXT};font-weight:700;">{dec.risk_level}</span>'
-            f'<span style="color:{TEXT_DIM};margin-left:.6rem;">SL</span>'
-            f'<span style="color:{C_SELL};">{sl}</span>'
-            f'<span style="color:{TEXT_DIM};margin-left:.6rem;">TP</span>'
-            f'<span style="color:{C_BUY};">{tp}</span>'
-            f'<span style="color:{TEXT_DIM};margin-left:.6rem;">RAG</span>'
-            f'<span style="color:{CYAN};">{dec.rag_context_quality}</span>'
-            f'<span style="color:{TEXT_DIM};margin-left:.6rem;">ATTR</span>'
-            f'<span style="color:{TEXT};font-weight:700;">{attr_label} {attr_score}%</span>'
-            f'<span style="color:{TEXT_DIM};margin-left:.6rem;">OUTLOOK</span>'
-            f'<span style="color:{CYAN};">{outlook}</span>'
-            f'</div>'
-            f'<div style="margin:.4rem 0;">{chips}</div>'
-            f'<div style="color:{TEXT_DIM};font-size:.6rem;letter-spacing:.12em;'
-            f'text-transform:uppercase;margin-top:.4rem;">Reasoning</div>'
-            f'<div style="background:#131722;border:1px solid #2a2e39;'
-            f'border-radius:4px;padding:.5rem .7rem;font-size:.72rem;'
-            f'line-height:1.55;color:#d1d4dc;max-height:160px;overflow-y:auto;'
-            f'margin-top:.3rem;">{reasoning}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+    if dec is None:
+        st.info("No assessment yet. Start your agent to see its reasoning here.")
     else:
-        st.markdown(
-            f'<div class="bt-panel" style="text-align:center;padding:1.5rem;">'
-            f'<div class="bt-section-title">{_dec_title}</div>'
-            f'<div style="color:{TEXT_DIM};font-size:.82rem;">'
-            f'No analysis yet. Press START to begin.</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"**Latest assessment · {dec.action.title()}**")
+        st.write(dec.reasoning)
+        with st.expander("Decision details"):
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Signal strength", f"{dec.confidence_score:.0%}")
+            c2.metric("Suggested stop", f"{dec.suggested_stop_loss_pct:g}%" if dec.suggested_stop_loss_pct else "—")
+            c3.metric("Suggested target", f"{dec.suggested_take_profit_pct:g}%" if dec.suggested_take_profit_pct else "—")
+            st.caption("Signal strength is not a probability of profit. Account risk limits still control execution.")
 
-with tab_board:
+with tab_research, st.expander("Research evidence", expanded=False):
+    from dashboard.components import render_entry_research
+    render_entry_research(state.get("last_research"))
+
+with tab_board, st.expander("Analyst desk", expanded=False):
     board = state.get("last_boardroom")
     if board is None:
         st.markdown(
@@ -735,7 +590,7 @@ with tab_board:
             unsafe_allow_html=True,
         )
 
-with tab_com:
+with tab_com, st.expander("Technical signals", expanded=False):
     com = state.get("last_committee")
     if com is None:
         st.markdown(

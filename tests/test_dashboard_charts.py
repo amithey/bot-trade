@@ -45,3 +45,13 @@ def test_chart_keeps_indicator_panels_and_crypto_weekends():
     assert macd.yaxis == "y4"
     assert not figure.layout.xaxis.rangebreaks
     assert df.index.tz is not None  # Rendering must not mutate source data.
+
+
+def test_old_trades_do_not_expand_the_selected_chart_window():
+    df = pd.DataFrame({"Open": [100, 101], "High": [102, 103], "Low": [99, 100],
+                       "Close": [101, 102], "SMA_20": [100, 101]},
+                      index=pd.date_range("2026-09-01", periods=2))
+    old = SimpleNamespace(ticker="AAPL", action="BUY", price=90, executed_at=datetime(2025, 1, 1))
+    figure = market_chart(df, "AAPL", [old], overlays=False)
+    assert not any(t.name in ("BUY", "SMA20") for t in figure.data)
+    assert list(figure.data[0].close) == [101, 102]

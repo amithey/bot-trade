@@ -8,14 +8,19 @@ from dashboard.theme import C_BUY, C_SELL, TEXT_DIM
 
 
 def page_header(title: str, description: str, *, section: str) -> None:
-    st.markdown(
-        f'<div class="workspace-header"><div>'
-        f'<div class="workspace-eyebrow">{escape(section)}</div>'
-        f'<h1 class="page-title">{escape(title)}</h1>'
-        f'<p class="page-sub">{escape(description)}</p></div>'
-        '<div class="workspace-context"><i></i> BotTrade <span> / </span> Workspace</div></div>',
-        unsafe_allow_html=True,
-    )
+    from dashboard.appearance import fullscreen_control
+    heading, controls = st.columns([6, 1], gap="small")
+    with heading:
+        st.markdown(
+            f'<div class="workspace-header"><div>'
+            f'<div class="workspace-eyebrow">{escape(section)}</div>'
+            f'<h1 class="page-title">{escape(title)}</h1>'
+            f'<p class="page-sub">{escape(description)}</p></div></div>',
+            unsafe_allow_html=True,
+        )
+    with controls:
+        fullscreen_control()
+
 
 
 def empty_workspace(title: str, description: str) -> None:
@@ -98,6 +103,8 @@ def render_entry_research(report) -> None:
     cols[1].metric("Setup", report["setup"])
     cols[2].metric("New entry gate", "Eligible" if report["entry_allowed"] else "Blocked")
     st.write(report["explanation"])
+    if report.get("policy_version"):
+        st.caption(f"Engine policy: {report['policy_version']}")
     if report.get("raw_action"):
         st.caption(f"Strategy candidate: {report['raw_action']} → filtered signal: {report.get('filtered_action', '—')}. "
                    "An eligible signal still needs the account's confidence, cash and safety checks.")
@@ -105,12 +112,21 @@ def render_entry_research(report) -> None:
     with evidence:
         st.dataframe(report["checks"], hide_index=True, width="stretch",
                      column_config={"name": "Check", "passed": "Passed", "detail": "Requirement"})
+        if report.get("price_action"):
+            with st.expander("Price action & chart structure", expanded=True):
+                st.dataframe([{"Observation": k.replace("_", " "), "Value": str(v)}
+                              for k, v in report["price_action"].items()], hide_index=True, width="stretch")
         with st.expander("Technical evidence", expanded=True):
             st.dataframe([{"Metric": k, "Value": v} for k, v in report["metrics"].items()],
                          hide_index=True, width="stretch")
             st.caption("Support/resistance and volume averages exclude the signal candle. Entry gates are rule-based hypotheses, not return forecasts.")
     with context:
         with st.expander("Fundamental context"):
+            analysis = report.get("fundamental_analysis") or {}
+            for observation in analysis.get("observations", []):
+                st.write(observation)
+            if analysis.get("limitations"):
+                st.caption(analysis["limitations"])
             metrics = report.get("fundamentals") or {}
             if metrics:
                 st.dataframe([{"Metric": k, "Value": str(v)} for k, v in metrics.items()], hide_index=True, width="stretch")
@@ -130,3 +146,32 @@ def render_entry_research(report) -> None:
                 st.markdown(title, unsafe_allow_html=True)
                 st.caption(f"{item['source']} · {item['published']}")
             st.caption("Public headlines are context, not an automatic buy/sell trigger. Committee uses technical rules; AI and Hybrid also evaluate supplied news and fundamentals.")
+
+        if report.get("experience"):
+            with st.expander("Recorded trading experience"):
+                experience = report["experience"]
+                st.caption(experience["assessment"])
+                st.write(f"{experience['exit_fills']} exit fills · {experience['losing_exit_fills']} losing fills · realized P&L {experience['realized_pnl']:+,.2f}")
+        if report.get("sources"):
+            with st.expander("Playbook references"):
+                for source in report["sources"]:
+                    st.link_button(source["title"], source["url"])
+
+
+
+def render_agent_summary(state):
+    running = state.get("running", False)
+    decision = state.get("last_decision")
+    if state.get("halt_reason"):
+        title, detail = "Agent needs your attention", state["halt_reason"]
+    elif not running:
+        title, detail = "Your agent is paused", "Review your strategy, then start when you are ready. Your portfolio remains visible below."
+    elif decision is None:
+        title, detail = "Your agent is studying the market", "The first assessment will appear here when the analysis completes."
+    else:
+        title = {"HOLD": "Waiting for a clearer opportunity", "BUY": "A buying opportunity was identified", "SELL": "An exit signal was identified"}.get(decision.action, "Reviewing the market")
+        detail = decision.reasoning[:240]
+    mode = {"COMMITTEE": "Systematic strategy", "AI": "AI analysis", "HYBRID": "Hybrid analysis", "BOARDROOM": "Analyst team"}.get(state.get("strategy_mode"), "Strategy")
+    st.markdown('<div class="agent-summary"><div class="agent-orb">✧</div><div>'
+                f'<strong>{escape(title)}</strong><p>{escape(detail)}</p></div>'
+                f'<span class="agent-state">{escape(mode)}</span></div>', unsafe_allow_html=True)

@@ -1,21 +1,7 @@
-"""
-BotTrade — entrypoint / router.
+"""BotTrade router: four primary destinations with progressively disclosed tools.
 
-Run:  python -X utf8 -m streamlit run dashboard/app.py
-
-This file used to *be* the live trading page (the default/root page under
-Streamlit's implicit ``pages/`` auto-discovery). Its actual content now
-lives at ``dashboard/pages/0_Live.py``; this file's only job is to declare
-every page once, grouped the way a trading desk actually thinks about them
-— Trade / Research / Lab / Account — and hand off to whichever one the
-visitor picked.
-
-Why this exists at all: the old sidebar was Streamlit's raw default —
-every file under ``pages/`` listed flat, in filename order, no grouping, no
-icons, labelled straight from the filename ("6_Watchlist_Scanner"). Eleven
-items in one undifferentiated list reads as a pile of settings, not a
-product with a shape. ``st.navigation()`` with a section mapping is the
-supported way to fix that without fighting Streamlit's router by hand.
+All routes stay registered for deep links and per-page access checks. The
+sidebar presents the daily workflow; specialist tools remain in an expander.
 """
 from __future__ import annotations
 
@@ -27,9 +13,6 @@ if str(_PROJECT_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_PROJECT_ROOT))
 
 import streamlit as st
-
-st.logo(str(_PROJECT_ROOT / "dashboard/assets/wordmark.svg"), size="large",
-        icon_image=str(_PROJECT_ROOT / "dashboard/assets/mark.svg"))
 
 # Started here because this router is the one file every session runs, and
 # install() is idempotent. It logs nothing unless the process is actually
@@ -74,10 +57,18 @@ _usage_billing = st.Page("pages/10_Usage_and_Billing.py", title="Usage & Billing
 #   Lab      — offline tools that consume no API budget: patterns, ML,
 #              a multi-analyst debate — none of them place an order.
 #   Account  — not trading at all: identity, billing, API key.
-_page = st.navigation({
-    "Trade":    [_live, _portfolio],
-    "Research": [_market_research, _sector_heatmap, _watchlist_scanner, _knowledge],
-    "Lab":      [_ml_lab, _analytics, _committee_lab],
-    "Account":  [_settings, _usage_billing],
-})
+# Register every route; expose a small primary navigation surface.
+_page = st.navigation([_live, _portfolio, _market_research, _settings,
+                       _sector_heatmap, _watchlist_scanner, _knowledge,
+                       _ml_lab, _analytics, _committee_lab, _usage_billing], position="hidden")
+with st.sidebar:
+    st.markdown('<div class="nav-caption">WORKSPACE</div>', unsafe_allow_html=True)
+    for page, label in ((_live, "Your agent"), (_portfolio, "Portfolio"),
+                        (_market_research, "Research"), (_settings, "Settings")):
+        st.page_link(page, label=label, width="stretch")
+    with st.expander("Advanced tools", expanded=False):
+        for page in (_watchlist_scanner, _sector_heatmap, _knowledge, _analytics,
+                     _committee_lab, _ml_lab):
+            st.page_link(page, width="stretch")
+    st.markdown('<div class="nav-footer">BOTTRADE<br><span>Investment workspace</span></div>', unsafe_allow_html=True)
 _page.run()

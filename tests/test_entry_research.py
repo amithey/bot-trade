@@ -241,3 +241,64 @@ render_entry_research(r)
     app.run(timeout=15)
     assert not app.exception
     assert [m.value for m in app.metric] == ["DOWNTREND", "NONE", "Blocked"]
+
+
+def test_live_does_not_buy_after_open_candle_crashes(live):
+    df = bars()
+    row = df.iloc[-1:].copy()
+    row.index = row.index + pd.Timedelta(minutes=5)
+    row.loc[:, ["Open", "High", "Low", "Close"]] *= .97
+    eng, _ = live(pd.concat([df, row]))
+    eng._cycle_once()
+    assert not eng.portfolio.trade_log
+    assert "setup invalidated" in eng.snapshot()["last_decision"].reasoning
+
+
+def test_live_rejects_a_failed_breakout_at_execution(live):
+    df = bars()
+    row = df.iloc[-1:].copy()
+    row.index = row.index + pd.Timedelta(minutes=5)
+    level = float(df.High.iloc[-21:-1].max()) - .05
+    row.loc[:, ["Open", "High", "Low", "Close"]] = level
+    eng, _ = live(pd.concat([df, row]))
+    eng._cycle_once()
+    assert not eng.portfolio.trade_log
+    assert "Breakout failed" in eng.snapshot()["last_decision"].reasoning
+
+
+def test_research_version_and_evidence_reach_persisted_trade(live):
+    eng, _ = live(bars())
+    eng._cycle_once()
+    report = eng.snapshot()["last_research"]
+    assert report["policy_version"] == "research-v2"
+    assert report["fundamental_analysis"]["status"] == "NOT_APPLICABLE"
+    assert "research-v2" in eng.portfolio.trade_log[-1].reasoning
+    assert "closed" in eng.portfolio.trade_log[-1].reasoning
+
+
+def test_briefing_is_causal_and_does_not_invent_crypto_fundamentals():
+    from strategy.briefing import chart_evidence, fundamental_evidence, trade_experience
+    df = bars()
+    before = chart_evidence(df.iloc[:230])
+    df.iloc[230:, df.columns.get_loc("Close")] *= 5
+    assert before == chart_evidence(df.iloc[:230])
+    assert fundamental_evidence(NS(profit_margin=.5), "BTC-USD")["status"] == "NOT_APPLICABLE"
+    assert trade_experience([], "BTC-USD")["exit_fills"] == 0
+
+
+@pytest.mark.parametrize("mode", ["AI", "HYBRID"])
+def test_ai_modes_receive_measured_research_and_playbook(live, monkeypatch, mode):
+    eng, _ = live(bars())
+    eng._strategy_mode = mode
+    eng._retriever = NS(get_relevant_strategies=lambda *a, **k: NS(chunks=[]))
+    captured = []
+    def evaluate(*args, **kwargs):
+        captured.append(kwargs["extra_context"])
+        return CommitteeVerdict("BUY", .5, 28, 9, 1, 38, True).to_trading_decision("BTC-USD")
+    monkeypatch.setattr(eng, "_ai_engine", lambda: NS(evaluate_market=evaluate))
+    monkeypatch.setattr(eng, "_shared_decision", lambda key, **kwargs: kwargs["compute"]())
+    eng._cycle_once()
+    assert captured and "research-v2" in captured[0]
+    assert "failed_resistance_break" in captured[0]
+    assert "NOT_APPLICABLE" in captured[0]
+    assert "No recorded exits" in captured[0]

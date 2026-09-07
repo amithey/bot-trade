@@ -224,3 +224,42 @@ sign-in (OIDC), the shared-password gate, and a production checklist.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+### Research v2
+
+The engine now passes a versioned measured-evidence packet to AI, Hybrid and
+all Boardroom seats. It describes candle rejection and failed resistance
+breaks, supplied fundamental metrics and missing coverage, plus account-local
+realized exit-fill history. The shared decision cache includes this packet
+so different account histories cannot accidentally reuse a personal briefing.
+Committee remains deterministic; it records the same research context but
+has no language-model reasoning or automatic retraining.
+
+Execution blocks both upward and downward moves beyond one ATR from the
+analyzed close, and a breakout that has returned below prior resistance.
+The lab entry filter applies the same price conditions. Executed trade
+reasoning retains the research version, candle timestamp and entry rationale.
+The chart exposes history windows, layer visibility, drawing tools and focus
+mode; old trades outside the chart window do not stretch its time axis.
+
+The playbook references Fidelity's ATR and support/resistance guides and the
+SEC's guide to company reports (links appear in Entry research). These sources
+explain concepts; they do not validate this implementation's thresholds.
+No new predictive model was trained and no improved market return is claimed.
+
+
+### Workspace appearance
+
+The sidebar exposes Agent, Portfolio, Research and Settings; specialist
+routes remain under Advanced tools. Account identity, billing links and the
+strategy guide live in Settings. The live desk shows agent status and three
+account metrics, with detailed evidence progressively disclosed below the
+chart. Resetting the paper portfolio is an account-level control in Settings.
+
+Settings > Appearance stores validated accent/background preferences in a
+per-account `.appearance.json` file beside the account profile. Styling is
+session scoped; semantic buy/sell colors remain unchanged. Style-only HTML
+uses Streamlit's non-layout container to avoid blank spacer rows. Fullscreen
+uses the browser Fullscreen API from an explicit button click, with an F11
+fallback when the embedding browser denies it. Escape exits fullscreen.

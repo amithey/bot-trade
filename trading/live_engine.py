@@ -1257,6 +1257,10 @@ class LiveTradingEngine:
             report["explanation"] = "Intraday candles unavailable; daily fallback is analysis only for new entries"
         from market_data.research_context import news_context
         report["news_context"] = news_context(ticker)
+        from strategy.briefing import enrich_report, model_briefing
+        enrich_report(report, snap.data, ticker=ticker, fundamentals=snap.fundamentals,
+                      trades=list(self.portfolio.trade_log))
+        research_context = model_briefing(report)
         with self._lock:
             self._last_research = report
         self._emit(PulseStage.INDICATORS,
@@ -1284,7 +1288,8 @@ class LiveTradingEngine:
         _pos = self.portfolio.positions.get(ticker)
         _cache_ttl = 270.0 if used_interval == "5m" else 1800.0
         _shared_key_parts = dict(
-            v=1,
+            v=2,
+            research=make_key(briefing=research_context),
             ticker=ticker,
             interval=used_interval,
             bar=self._bar_stamp(snap),
@@ -1381,6 +1386,7 @@ class LiveTradingEngine:
                                      if pos is not None else None),
                         risk_profile=risk_profile,
                         daily_pnl_pct=daily_pnl,
+                        extra_context=research_context,
                     )
 
                 # Nine calls a cycle makes this the one path where sharing
@@ -1459,7 +1465,7 @@ class LiveTradingEngine:
                     ttl=_cache_ttl,
                     compute=lambda: self._ai_engine().evaluate_market(
                         snap, retrieval, risk_profile=risk_profile,
-                        extra_context=committee_ctx,
+                        extra_context=committee_ctx + "\n" + research_context,
                     ),
                     mode="HYBRID",
                     ticker=ticker,
@@ -1509,6 +1515,7 @@ class LiveTradingEngine:
                     ttl=_cache_ttl,
                     compute=lambda: self._ai_engine().evaluate_market(
                         snap, retrieval, risk_profile=risk_profile,
+                        extra_context=research_context,
                     ),
                     mode="AI",
                     ticker=ticker,
@@ -1542,13 +1549,13 @@ class LiveTradingEngine:
                        level="WARN")
             return
         # A valid closed-bar setup is not permission to chase a later price gap.
-        signal_close = report["metrics"].get("close")
-        signal_atr = report["metrics"].get("atr")
-        if signal_close is not None and signal_atr and price > signal_close + signal_atr:
+        from strategy.briefing import execution_entry_check
+        execution_ok, execution_reason = execution_entry_check(report, price)
+        report["checks"].append({"name": "Execution price", "passed": execution_ok,
+                                  "detail": execution_reason})
+        if not execution_ok:
             report["entry_allowed"] = False
-            report["explanation"] = "Current price is more than one ATR above the analyzed close"
-            report["checks"].append({"name": "Execution price", "passed": False,
-                                      "detail": report["explanation"]})
+            report["explanation"] = execution_reason
 
         # Apply an identical deterministic entry gate to every decision mode.
         # SELL/risk exits are never blocked by an entry-only trend filter.
@@ -1559,6 +1566,9 @@ class LiveTradingEngine:
                 "reasoning": f"BUY blocked by entry research: {report['explanation']}. " + decision.reasoning,
             })
             self._emit(PulseStage.RISK, decision.reasoning[:500], level="WARN")
+        decision = decision.model_copy(update={"reasoning":
+            f"[{report['policy_version']}] {report['regime']} / {report['setup']}; "
+            f"closed {signal.bar}; {report['explanation']}. " + decision.reasoning})
         report["filtered_action"] = decision.action
         with self._lock:
             self._last_signal_bars[signal_key] = signal.bar
@@ -1645,7 +1655,7 @@ class LiveTradingEngine:
             try:
                 self.portfolio.buy(
                     ticker, buy_px, cash_amount=cash_to_use,
-                    reasoning=decision.reasoning[:250],
+                    reasoning=decision.reasoning[:2000],
                 )
                 pyramid_tag = " (pyramid)" if already_held else ""
                 slip_tag = (f" [slip {(buy_px-price)/price*1e4:+.1f}bps]"
@@ -1667,7 +1677,7 @@ class LiveTradingEngine:
                 try:
                     tr = self.portfolio.sell(
                         ticker, sell_px,
-                        reasoning=decision.reasoning[:250],
+                        reasoning=decision.reasoning[:2000],
                     )
                     emoji = "🟢" if tr.realized_pnl >= 0 else "🔴"
                     slip_tag = (f" [slip {(sell_px-price)/price*1e4:+.1f}bps]"
@@ -1676,7 +1686,7 @@ class LiveTradingEngine:
                                f"{emoji} SELL {ticker} @ ${sell_px:,.2f} "
                                f"P&L ${tr.realized_pnl:+,.2f}{slip_tag}",
                                level="TRADE")
-                    self._reflect_on_sell(tr, exit_reasoning=decision.reasoning[:250])
+                    self._reflect_on_sell(tr, exit_reasoning=decision.reasoning[:2000])
                 except Exception as exc:
                     self._emit(PulseStage.ERROR,
                                f"SELL failed: {exc}", level="ERROR")

@@ -33,9 +33,69 @@ CUSTOM_LABEL    = "Custom"
 
 # Re-export tokens for existing pages; theme is independent of account state.
 from dashboard.theme import (
-    BG_DEEP, BG_PANEL, BG_RAISED, BORDER, BORDER_HI, TEXT_DIM, TEXT,
-    TEXT_HI, CYAN, C_BUY, C_SELL, C_HOLD, AMBER, GRID, BG, _THEME_CSS,
+    _THEME_CSS,
+    AMBER,
+    BG,
+    BG_DEEP,
+    BG_PANEL,
+    BG_RAISED,
+    BORDER,
+    BORDER_HI,
+    C_BUY,
+    C_HOLD,
+    C_SELL,
+    CYAN,
+    GRID,
+    TEXT,
+    TEXT_DIM,
+    TEXT_HI,
 )
+
+# Explicit public exports keep Ruff from removing the page-facing theme API.
+__all__ = [
+    'AMBER',
+    'BG',
+    'BG_DEEP',
+    'BG_PANEL',
+    'BG_RAISED',
+    'BORDER',
+    'BORDER_HI',
+    'CUSTOM_LABEL',
+    'CYAN',
+    'C_BUY',
+    'C_HOLD',
+    'C_SELL',
+    'DEFAULT_TICKERS',
+    'GRID',
+    'LEGACY_PROFILE_PATH',
+    'RISK_CHOICES',
+    'ROOT',
+    'TEXT',
+    'TEXT_DIM',
+    'TEXT_HI',
+    '_THEME_CSS',
+    'account_id',
+    'current_engine',
+    'engine_capacity_message',
+    'ensure_event_buffer',
+    'ensure_logs_in_session',
+    'ensure_portfolio_in_session',
+    'ensure_profile_in_session',
+    'get_live_engine',
+    'get_pipeline',
+    'get_tenant',
+    'get_user_api_key',
+    'portfolio_path',
+    'profile_path',
+    'pump_events',
+    'pump_toasts',
+    'save_portfolio',
+    'save_profile',
+    'secure_page',
+    'set_user_api_key',
+    'validate_ticker_symbol',
+]
+
 
 
 def secure_page() -> None:
@@ -66,10 +126,13 @@ def secure_page() -> None:
     """
     from dashboard.theme import register_chart_theme
     register_chart_theme()
-    st.markdown(_THEME_CSS, unsafe_allow_html=True)
-    from dashboard._identity import render_account_chip, require_login
+    # Apply the complete, account-aware theme before rendering authentication
+    # or page content. Injecting the base CSS first and the saved appearance
+    # later caused a visible old-theme frame on every Streamlit rerun.
+    from dashboard.appearance import apply_appearance
+    apply_appearance()
+    from dashboard._identity import require_login
     require_login()
-    render_account_chip()
 
 
 # ── Per-user profile storage ─────────────────────────────────────────────────
@@ -330,8 +393,8 @@ def get_tenant():
     Rebuilt on every rerun — cheap by design; the ledger and engine cache
     behind it are process-wide singletons.
     """
-    from saas.tenant import Tenant
     from dashboard._identity import account_slug
+    from saas.tenant import Tenant
     return Tenant(
         account_id=account_id(),
         user_api_key=get_user_api_key(),

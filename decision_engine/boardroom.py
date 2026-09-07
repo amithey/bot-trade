@@ -502,7 +502,8 @@ class AnalystBoardroom:
     def convene(self, snapshot, verdict=None, in_position: bool = False,
                 entry_price: Optional[float] = None,
                 risk_profile: str = "Balanced",
-                daily_pnl_pct: Optional[float] = None) -> BoardroomRuling:
+                daily_pnl_pct: Optional[float] = None,
+                extra_context: Optional[str] = None) -> BoardroomRuling:
         """
         Hold one full committee meeting for *snapshot.ticker*.
 
@@ -539,6 +540,9 @@ class AnalystBoardroom:
             "flow":        _flow_packet(snapshot),
             "contrarian":  _contrarian_packet(snapshot, bundle, verdict),
         }
+
+        if extra_context:
+            packets = {kind: packet + "\n\n" + extra_context for kind, packet in packets.items()}
 
         # All analysts study their packets at the same moment.
         with ThreadPoolExecutor(max_workers=len(_PANEL),

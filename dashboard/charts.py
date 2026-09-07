@@ -4,7 +4,7 @@ from plotly.subplots import make_subplots
 from dashboard.theme import BG_DEEP, C_BUY, C_SELL, CYAN, GRID, TEXT, TEXT_DIM, register_chart_theme
 
 
-def market_chart(df, ticker, trades=()):
+def market_chart(df, ticker, trades=(), *, overlays=True, show_trades=True):
     """Candles, volume, RSI and MACD with a persistent pan/zoom viewport."""
     register_chart_theme()
     fig = make_subplots(
@@ -25,7 +25,7 @@ def market_chart(df, ticker, trades=()):
     ), row=1, col=1)
 
     # Bollinger band envelope (soft fill behind the SMAs)
-    if "BB_Upper_20" in df.columns and "BB_Lower_20" in df.columns:
+    if overlays and "BB_Upper_20" in df.columns and "BB_Lower_20" in df.columns:
         fig.add_trace(go.Scatter(
             x=idx, y=df["BB_Upper_20"], name="BB±2σ",
             line=dict(color="rgba(0,183,255,0.28)", width=0.8),
@@ -43,16 +43,27 @@ def market_chart(df, ticker, trades=()):
         ("SMA_50",  "#3498db", "SMA50", 1.1),
         ("SMA_200", "#e74c3c", "SMA200", 1.6),
     ]:
-        if col_name in df.columns:
+        if overlays and col_name in df.columns:
             fig.add_trace(go.Scatter(
                 x=idx, y=df[col_name], name=lbl,
                 line=dict(color=clr, width=w), opacity=0.85,
             ), row=1, col=1)
 
     # Trade markers for this ticker
-    relevant = [t for t in trades if t.ticker == ticker]
+    import pandas as pd
+    # Prevent old fills stretching the current chart's visible time window.
+    lower = pd.Timestamp(df.index[0])
+    upper = pd.Timestamp(df.index[-1])
+    step = df.index[-1] - df.index[-2] if len(df) > 1 else pd.Timedelta(days=1)
+    lower = lower.tz_localize("UTC") if lower.tzinfo is None else lower.tz_convert("UTC")
+    upper = (upper.tz_localize("UTC") if upper.tzinfo is None else upper.tz_convert("UTC")) + step
+    def visible_trade(trade):
+        stamp = pd.Timestamp(trade.executed_at)
+        stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+        return lower <= stamp < upper
+    relevant = [t for t in trades if show_trades and t.ticker == ticker and visible_trade(t)]
     buys  = [t for t in relevant if t.action == "BUY"]
-    sells = [t for t in relevant if "SELL" in t.action]
+    sells = [t for t in relevant if "SELL" in t.action or t.action == "FORCE_CLOSE"]
     if buys:
         fig.add_trace(go.Scatter(
             x=[t.executed_at for t in buys],
@@ -115,6 +126,7 @@ def market_chart(df, ticker, trades=()):
         margin=dict(l=8, r=58, t=28, b=16),
         hovermode="x unified", dragmode="pan",
         uirevision=ticker,
+        newshape=dict(line_color=CYAN, line_width=1.5),
         font=dict(family="Inter, Segoe UI, sans-serif", size=11, color=TEXT),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"),
