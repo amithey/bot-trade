@@ -145,14 +145,13 @@ st.markdown(
     f'<div class="bt-brand">'
     f'<div style="display:flex;align-items:center;gap:.8rem;">'
     f'<div class="bt-brand-mark">BT</div>'
-    f'<div><div class="bt-brand-title">BotTrade / Chart workspace</div>'
-    f'<div class="bt-brand-sub">Analyze markets. Monitor strategies. Manage exposure.</div></div>'
+    f'<div><div class="bt-brand-title">Trading terminal</div>'
+    f'<div class="bt-brand-sub">Your market, strategy and execution — in one view.</div></div>'
     f'</div>'
     f'<div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end;">'
     f'<span class="badge badge-blue">{_html.escape(_plan_badge)} plan</span>'
     f'<span class="badge {_fund_class}">{_html.escape(_fund_badge)}</span>'
     f'<span class="badge badge-gray">Paper execution</span>'
-    f'<span class="badge badge-amber">Risk controlled</span>'
     f'</div>'
     f'</div>',
     unsafe_allow_html=True,
@@ -229,7 +228,7 @@ if not _plan_ent.llm_available:
 # ─────────────────────────────────────────────────────────────────────────────
 control_panel, c_start, c_reset = st.columns([6, 1, 1], gap="small")
 with control_panel:
-    with st.expander("Symbol, strategy & risk controls", expanded=False):
+    with st.expander("Trading configuration", expanded=False):
         c_ticker, c_strategy, c_interval = st.columns([2, 2, 1], gap="small")
         c_cap, c_size, c_risk = st.columns(3, gap="small")
 
@@ -348,7 +347,7 @@ with control_panel:
         from config.user_profile import RISK_ENVELOPES
         _active_envelope = RISK_ENVELOPES[risk]
         _strategy_scope = {
-            "COMMITTEE": "Technical indicators only",
+            "COMMITTEE": "Closed candles + regime and setup gate · public news context",
             "AI": "Technical, fundamental and knowledge analysis",
             "HYBRID": "Technical consensus with AI context review",
             "BOARDROOM": "Multiple analysts with a final chair review",
@@ -556,10 +555,14 @@ with context_column:
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  BOTTOM TABS — Decision · Positions · Trades · Events
 # ─────────────────────────────────────────────────────────────────────────────
-tab_dec, tab_board, tab_com, tab_eq, tab_pos, tab_tr, tab_log = st.tabs(
-    ["Overview", "Analyst desk", "Technical signals", "Equity", "Positions",
+tab_research, tab_dec, tab_board, tab_com, tab_eq, tab_pos, tab_tr, tab_log = st.tabs(
+    ["Entry research", "Decision", "Analyst desk", "Technical signals", "Equity", "Positions",
      "Orders & trades", "Activity log"]
 )
+
+with tab_research:
+    from dashboard.components import render_entry_research
+    render_entry_research(state.get("last_research"))
 
 with tab_dec:
     dec = state.get("last_decision")
@@ -598,7 +601,7 @@ with tab_dec:
             f'{dec.action}</div>'
             f'<div style="flex:1;">'
             f'<div style="color:{TEXT_DIM};font-size:.6rem;letter-spacing:.12em;'
-            f'text-transform:uppercase;">Confidence</div>'
+            f'text-transform:uppercase;">Signal strength (not win probability)</div>'
             f'<div style="background:#131722;border:1px solid #2a2e39;'
             f'border-radius:3px;height:6px;overflow:hidden;margin-top:3px;">'
             f'<div style="height:6px;width:{conf_pct}%;background:{conf_color};"></div>'

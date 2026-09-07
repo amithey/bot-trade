@@ -93,7 +93,7 @@ class CommitteeVerdict:
 
     @property
     def confidence(self) -> float:
-        """Map vote margin to a [0.5, 1.0] confidence figure."""
+        """Heuristic vote strength, not a calibrated probability of a profitable trade."""
         return round(min(1.0, 0.5 + abs(self.score)), 3)
 
     def top_contributors(self, n: int = 5) -> list[str]:

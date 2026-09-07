@@ -614,7 +614,7 @@ class MarketDataFetcher:
         # yfinance returns a timezone-aware index; strip tz to make it naive UTC.
         # Plotly handles naive DatetimeIndex cleanly; rangebreaks work correctly.
         if df.index.tzinfo is not None:
-            df.index = df.index.tz_localize(None)
+            df.index = df.index.tz_convert("UTC").tz_localize(None)
 
         # Keep only the canonical OHLCV columns, drop anything yfinance appends
         ohlcv_cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]

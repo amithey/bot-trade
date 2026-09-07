@@ -19,7 +19,7 @@ never touching a real brokerage.
 
   | Mode | What decides | Calls Claude? |
   | --- | --- | --- |
-  | `COMMITTEE` | 38 indicators vote; majority rules | No — runs free forever |
+  | `COMMITTEE` | 38 indicators vote, followed by the entry research gate | No model calls |
   | `AI` | Claude alone, with RAG context | 1 call/cycle |
   | `HYBRID` | Committee votes, Claude reviews the tally | 1 call/cycle |
   | `BOARDROOM` | 8 analyst personas + a chairman, in parallel | ~9 calls/cycle |
@@ -32,6 +32,37 @@ never touching a real brokerage.
 - **Runs live** in a Streamlit dashboard: portfolio, analytics, sector
   heatmap, watchlist scanner, and a knowledge-base manager — see
   [Dashboard pages](#dashboard-pages) below.
+
+### Entry research and validation
+
+Live decisions use validated, completed candles, with at most one strategy
+decision per symbol and interval per candle during an engine session. Risk
+exits still run between candles. Stale data blocks strategy decisions; daily
+fallback data cannot authorize a new intraday entry.
+
+Every strategy's BUY candidate passes a shared entry gate. Balanced and
+Aggressive require an established upward trend and a confirmed pullback or
+breakout, sufficient volume, and a limit on price extension. Conservative
+uses stricter volume and extension thresholds. Micro-Scalp also permits an
+explicit countertrend reversal setup. A post-close jump greater than one ATR
+blocks chasing the entry. These rules are testable hypotheses, not a trained
+model or a demonstrated improvement in returns. SELL and protective exits
+are not restricted by this entry gate.
+
+The Live page's **Entry research** tab exposes the regime, setup, evidence,
+failed checks, and candidate versus filtered signal. Public news is fetched
+asynchronously with source links and publication dates; unavailable data is
+reported explicitly. Headlines and available fundamentals provide context;
+they do not become automatic order triggers in Committee mode. Committee
+signal strength is a vote heuristic, not a calibrated probability of profit.
+
+In **Committee Lab**, compare the original vote-only policy with the entry
+filter on the final 30% of a chronological dataset. Earlier bars warm the
+indicators; the comparison uses fixed defaults without parameter fitting.
+The lab models next-open fills and fees, but does not reproduce live sizing,
+slippage, stops or partial exits. Optimizer results are in-sample and must
+not be presented as independent validation. Repeatedly choosing rules after
+viewing the same evaluation window also compromises its independence.
 
 ### Multi-tenant / hosting a shared instance
 

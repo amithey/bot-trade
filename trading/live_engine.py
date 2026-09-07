@@ -13,7 +13,7 @@ import threading
 import time
 import traceback
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -113,6 +113,8 @@ class LiveTradingEngine:
         self._stage:    PulseStage = PulseStage.IDLE
         self._activity: str = "Idle"
         self._last_decision = None
+        self._last_research = None
+        self._last_signal_bars: dict[tuple[str, str], str] = {}
         self._last_committee: Optional[dict] = None
         self._committee = None               # lazy IndicatorCommittee
         self._boardroom = None               # lazy AnalystBoardroom
@@ -501,6 +503,7 @@ class LiveTradingEngine:
                 self._ticker = ticker.upper()
                 self._last_decision = None
                 self._last_snapshot_df = None
+                self._last_research = None
                 self._emit(PulseStage.IDLE,
                            f"Ticker changed → {self._ticker}", level="INFO")
                 # Wake the sleep loop so the next cycle starts immediately
@@ -549,6 +552,14 @@ class LiveTradingEngine:
     def snapshot(self) -> dict:
         """Compact state snapshot for the UI."""
         with self._lock:
+            research_snapshot = self._last_research
+        if research_snapshot and research_snapshot.get("ticker"):
+            from market_data.research_context import news_context
+            context = news_context(research_snapshot["ticker"])
+            with self._lock:
+                if self._last_research is research_snapshot:
+                    self._last_research = {**research_snapshot, "news_context": context}
+        with self._lock:
             return {
                 "running":         self.is_running(),
                 "stage":           self._stage.value,
@@ -566,6 +577,7 @@ class LiveTradingEngine:
                 "daily_target_pct": self._daily_target_pct,
                 "daily_loss_limit_pct": self._daily_loss_limit_pct,
                 "last_decision":   self._last_decision,
+                "last_research":   self._last_research,
                 "last_price":      self._last_price,
                 "last_df":         self._last_snapshot_df,
                 "cycle_count":     self._cycle_count,
@@ -1210,6 +1222,47 @@ class LiveTradingEngine:
                                f"Take-profit sell failed: {exc}", level="ERROR")
                 return
 
+        # Risk checks use the latest mark above; decisions use completed candles only.
+        from market_data.signal_bars import completed_bars
+        from strategy.research import analyze_entry
+        try:
+            signal = completed_bars(snap.data, used_interval)
+        except (ValueError, KeyError, TypeError) as exc:
+            with self._lock:
+                self._last_research = {"status": "DATA_BLOCKED", "reason": str(exc)}
+                self._last_decision = None
+            self._emit(PulseStage.RISK, f"Analysis blocked: {exc}", level="WARN")
+            return
+        if signal.data.empty or not signal.fresh:
+            with self._lock:
+                self._last_research = {"status": "DATA_BLOCKED", "reason": signal.reason}
+                self._last_decision = None
+            self._emit(PulseStage.RISK, signal.reason, level="WARN")
+            return
+        signal_key = (ticker, used_interval)
+        if self._last_signal_bars.get(signal_key) == signal.bar:
+            self._emit(PulseStage.INDICATORS, "Completed candle already analyzed; risk monitoring remains active",
+                       level="INFO")
+            return
+        snap = replace(snap, data=signal.data)
+        research = analyze_entry(snap.data, risk_profile=risk_profile,
+                                 fundamentals=snap.fundamentals)
+        report = research.to_dict()
+        report.update(status="ANALYZED", ticker=ticker, interval=used_interval,
+                      bar_closed_at=signal.bar, explanation=research.explanation,
+                      fundamentals=snap.fundamentals.summary_dict() if snap.fundamentals else {})
+        # Daily fallback is useful context, not a replacement for an intraday entry.
+        if used_interval != "5m":
+            report["entry_allowed"] = False
+            report["explanation"] = "Intraday candles unavailable; daily fallback is analysis only for new entries"
+        from market_data.research_context import news_context
+        report["news_context"] = news_context(ticker)
+        with self._lock:
+            self._last_research = report
+        self._emit(PulseStage.INDICATORS,
+                   f"Research: {research.regime} / {research.setup} — {report['explanation']}",
+                   level="INFO", meta={"research": report})
+
         # ── Decision — committee vote, RAG + Claude, or both (hybrid) ──────
         # Re-check entitlement every cycle, not just on config change: a trial
         # budget can run out mid-session, and the right response is a quiet
@@ -1477,6 +1530,40 @@ class LiveTradingEngine:
                 level="DECISION",
                 meta={"decision": decision.model_dump()},
             )
+
+        # A late answer must not execute after a stop or a user config change.
+        with self._lock:
+            superseded = (self._stop_flag.is_set() or ticker != self._ticker
+                          or risk_profile != self._risk_profile
+                          or trade_size_pct != self._trade_size_pct
+                          or strategy_mode != self._strategy_mode)
+        if superseded:
+            self._emit(PulseStage.RISK, "Decision discarded: engine stopped or configuration changed during analysis",
+                       level="WARN")
+            return
+        # A valid closed-bar setup is not permission to chase a later price gap.
+        signal_close = report["metrics"].get("close")
+        signal_atr = report["metrics"].get("atr")
+        if signal_close is not None and signal_atr and price > signal_close + signal_atr:
+            report["entry_allowed"] = False
+            report["explanation"] = "Current price is more than one ATR above the analyzed close"
+            report["checks"].append({"name": "Execution price", "passed": False,
+                                      "detail": report["explanation"]})
+
+        # Apply an identical deterministic entry gate to every decision mode.
+        # SELL/risk exits are never blocked by an entry-only trend filter.
+        report["raw_action"] = decision.action
+        if decision.action == "BUY" and not report["entry_allowed"]:
+            decision = decision.model_copy(update={
+                "action": "HOLD", "attractiveness_label": "NEUTRAL",
+                "reasoning": f"BUY blocked by entry research: {report['explanation']}. " + decision.reasoning,
+            })
+            self._emit(PulseStage.RISK, decision.reasoning[:500], level="WARN")
+        report["filtered_action"] = decision.action
+        with self._lock:
+            self._last_signal_bars[signal_key] = signal.bar
+            self._last_research = dict(report)
+            self._last_decision = decision
 
         # ── Execute ─────────────────────────────────────────────────────────
         # Compute slippage-adjusted ATR% (for size-aware fills below)

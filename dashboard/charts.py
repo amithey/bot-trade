@@ -1,7 +1,7 @@
 """Chart builders independent of Streamlit session state."""
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from dashboard.theme import C_BUY, C_SELL, CYAN, GRID, TEXT, TEXT_DIM, register_chart_theme
+from dashboard.theme import BG_DEEP, C_BUY, C_SELL, CYAN, GRID, TEXT, TEXT_DIM, register_chart_theme
 
 
 def market_chart(df, ticker, trades=()):
@@ -111,7 +111,7 @@ def market_chart(df, ticker, trades=()):
     is_crypto = "-USD" in ticker.upper()
     fig.update_layout(
         template="bottrade", height=620,
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#131722",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor=BG_DEEP,
         margin=dict(l=8, r=58, t=28, b=16),
         hovermode="x unified", dragmode="pan",
         uirevision=ticker,
