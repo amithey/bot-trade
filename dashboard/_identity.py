@@ -100,10 +100,9 @@ def accounts_enabled() -> bool:
 def auth_mode() -> str:
     """``"accounts"`` | ``"oidc"`` | ``"password"`` | ``"open"``.
 
-    ``accounts`` deliberately outranks ``oidc``: a deployment that has turned
-    on its own account system has chosen a front door, and showing a Google
-    button beside it would fork identity in two — the same person would end
-    up with one account per route in.
+    ``accounts`` enables email/password registration alongside an existing
+    OIDC provider. Self-asserted emails use a separate identity namespace;
+    switching providers never grants access to another account's data.
     """
     if accounts_enabled():
         return "accounts"
@@ -154,10 +153,10 @@ def current_user() -> dict:
 def display_name() -> str:
     """Something short to show in the sidebar."""
     mode = auth_mode()
-    if mode == "accounts":
+    if mode == "accounts" and not is_logged_in():
         from dashboard import _accounts
         return _accounts.current_email() or "Signed in"
-    if mode == "oidc":
+    if mode == "oidc" or (mode == "accounts" and is_logged_in()):
         u = current_user()
         return u.get("name") or u.get("email") or "Signed in"
     if mode == "password":
@@ -177,16 +176,15 @@ def account_id() -> str:
         return cached
 
     mode = auth_mode()
-    if mode == "accounts":
+    if mode == "accounts" and not is_logged_in():
         from dashboard import _accounts
         email = _accounts.current_email()
-        # Same ``user:<email>`` shape OIDC produces, so a portfolio, profile,
-        # ledger row or Paddle customer created under one mode is found
-        # unchanged under the other.
-        ident = f"user:{email}" if email else "user:unknown"
+        # Self-asserted email is not proof of ownership of an OIDC identity.
+        # Google users retain their original identity via the provider button.
+        ident = f"account:{email}" if email else "account:unknown"
         st.session_state[_ID_SLOT] = ident
         return ident
-    if mode == "oidc":
+    if mode == "oidc" or (mode == "accounts" and is_logged_in()):
         u = current_user()
         email = (u.get("email") or "").strip().lower()
         if email:
@@ -228,12 +226,13 @@ def account_slug(ident: Optional[str] = None) -> str:
 _LOGIN_CSS = """
 <style>
 .st-key-bt_login_card {
-    background:#1e222d; border:1px solid #2a2e39; border-radius:6px;
+    background:var(--secondary-background-color,#1a1d20);
+    border:1px solid #2b3034; border-radius:8px;
     padding:2rem; margin-top:2rem; width:100%; min-width:0;
 }
-.bt-login-mark { width:40px; height:40px; border-radius:3px;
-                 background:#2962ff;
-                 border:1px solid #2962ff;
+.bt-login-mark { width:40px; height:40px; border-radius:8px;
+                 background:var(--bt-accent,#62b8a5);
+                 border:1px solid var(--bt-accent,#62b8a5);
                  display:flex; align-items:center; justify-content:center;
                  font-family:var(--font-ui,'Segoe UI',sans-serif);
                  color:#fff; font-weight:900; font-size:.9rem;
@@ -295,7 +294,7 @@ def require_login() -> None:
         # Any queued cookie write happens on a run that is allowed to finish;
         # reading the cookie needs nothing but st.context.
         _accounts.flush_cookie_writes()
-        if _accounts.is_signed_in():
+        if is_logged_in() or _accounts.is_signed_in():
             return
         _render_accounts_card()
         st.stop()
@@ -385,6 +384,17 @@ def _render_accounts_card() -> None:
             unsafe_allow_html=True,
         )
 
+        if oidc_configured():
+            providers = oidc_providers()
+            for name in providers:
+                st.button(_PROVIDER_LABELS.get(name, f"Continue with {name.title()}"),
+                          key=f"_bt_accounts_oidc_{name}", width="stretch",
+                          on_click=st.login, args=(name,))
+            if not providers:
+                st.button("Continue with existing provider", key="_bt_accounts_oidc",
+                          width="stretch", on_click=st.login)
+            st.caption("Already use Google? Continue with the same provider to access your existing portfolio. Email/password creates a separate account.")
+            st.divider()
         _accounts.render_forms()
 
         st.markdown(
@@ -403,14 +413,13 @@ def _render_accounts_card() -> None:
 
 
 def render_account_chip() -> None:
-    """Sidebar identity block with a sign-out control."""
+    """Account settings identity block with a sign-out control."""
     mode = auth_mode()
     if mode == "open":
         return
 
-    with st.sidebar:
-        st.markdown("---")
-        if mode == "accounts":
+    with st.container():
+        if mode == "accounts" and not is_logged_in():
             from dashboard import _accounts
             st.caption(f"Signed in as **{display_name()}**")
             if st.button("Sign out", width="stretch",
@@ -418,10 +427,13 @@ def render_account_chip() -> None:
                 _accounts.sign_out()
                 forget_identity()
                 st.rerun()
-        elif mode == "oidc" and is_logged_in():
+        elif mode in ("oidc", "accounts") and is_logged_in():
             st.caption(f"Signed in as **{display_name()}**")
             if st.button("Sign out", width="stretch",
                          key="_bt_signout"):
+                if mode == "accounts":
+                    from dashboard import _accounts
+                    _accounts.sign_out()
                 forget_identity()
                 st.logout()
         elif mode == "password":

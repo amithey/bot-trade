@@ -578,3 +578,22 @@ the password hash is wrong. Double-check the salt.
 clicking the play button on the Live page. By design — never wants
 to silently run on a bare boot. If you want auto-start on container
 boot, plumb a flag in `dashboard/app.py`.
+
+
+## Built-in account activation
+
+Deploy the identity-isolation fix before enabling email/password registration.
+Stage `AUTH_ACCOUNTS_ENABLED=true` with `fly secrets set --stage --app bottrade
+AUTH_ACCOUNTS_ENABLED=true`, then deploy the reviewed application. Confirm the
+sign-in page shows Sign in / Create account and the configured Google button.
+The `data/users.db` file lives on the persistent `/app/data` volume.
+
+Email/password identities use `account:<email>`; verified provider identities
+keep `user:<email>`. A self-asserted address must never inherit an existing
+Google user's portfolio or subscription. Existing Google users should continue
+with Google. Account linking and email verification are not implemented;
+creating a password account does not migrate Google data. Sessions are checked
+on every page pass, including expiry and revocation.
+
+To roll back registration, set `AUTH_ACCOUNTS_ENABLED=false`; account records
+remain on the volume and configured OIDC remains available.

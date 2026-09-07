@@ -123,13 +123,17 @@ def backtest_committee(
     score_np = score.to_numpy()
     quorum_np = quorum.to_numpy()
     entry_ok = np.ones(len(df), dtype=bool)
-    entry_atr = np.full(len(df), np.nan)
+    execution_ok = np.ones(len(df), dtype=bool)
     if entry_filter:
         from strategy.research import entry_features
         from config.user_profile import RISK_ENVELOPES
         features = entry_features(df, risk_profile)
         entry_ok = features["eligible"].to_numpy()
-        entry_atr = features["atr"].to_numpy()
+        atr = features["atr"].to_numpy()
+        setups = features["setup"].to_numpy()
+        resistance = features["resistance"].to_numpy()
+        execution_ok[1:] = ((np.abs(open_[1:] - close[:-1]) <= atr[:-1])
+                            & ((setups[:-1] != "TREND_BREAKOUT") | (open_[1:] > resistance[:-1])))
         threshold = RISK_ENVELOPES.get(risk_profile, RISK_ENVELOPES["Balanced"]).conf_threshold
         entry_ok &= (.5 + score.abs()).to_numpy() >= threshold
     n = len(df)
@@ -153,7 +157,7 @@ def backtest_committee(
         # Execute the signal decided on the PREVIOUS bar at this bar's open
         if i > warm:
             prev_score, prev_q = score_np[i - 1], quorum_np[i - 1]
-            if not in_pos and prev_q and prev_score >= cfg.enter_score and entry_ok[i - 1] and (not entry_filter or open_[i] <= close[i - 1] + entry_atr[i - 1]):
+            if not in_pos and prev_q and prev_score >= cfg.enter_score and entry_ok[i - 1] and execution_ok[i]:
                 fill = open_[i] * (1 + fee)
                 units = cash / fill
                 fees_paid += cash * fee

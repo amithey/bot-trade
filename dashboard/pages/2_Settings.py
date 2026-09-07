@@ -35,10 +35,16 @@ ensure_profile_in_session()
 from dashboard.components import page_header
 page_header('Settings', 'Configure your strategy, risk limits, watchlist and account.', section='Account / Preferences')
 
-account_tab, trading_tab, notifications_tab = st.tabs(
-    ["Account & subscription", "Trading & watchlist", "Notifications"]
+appearance_tab, account_tab, trading_tab, notifications_tab = st.tabs(
+    ["Appearance", "Account", "Trading", "Notifications"]
 )
+with appearance_tab:
+    from dashboard.appearance import appearance_settings
+    appearance_settings()
 with account_tab:
+    from dashboard._identity import render_account_chip
+    render_account_chip()
+    st.page_link("pages/10_Usage_and_Billing.py", label="Open usage & billing", icon=":material/receipt_long:")
     # ── Plan + API key ──────────────────────────────────────────────────────────
     tenant = get_tenant()
     _ledger = get_ledger()
@@ -553,3 +559,12 @@ st.caption(
     "[Privacy Policy](https://bottrade-ten.vercel.app/privacy.html) · "
     "[Refund Policy](https://bottrade-ten.vercel.app/refunds.html)"
 )
+
+with trading_tab:
+    with st.expander("Strategy guide"):
+        from dashboard.strategy_guide import GUIDE
+        st.markdown(GUIDE)
+    with st.expander("Reset paper portfolio"):
+        st.caption("Clears the paper portfolio and stops its agent. This cannot be undone from the dashboard.")
+        from dashboard.portfolio_actions import render_reset
+        render_reset()

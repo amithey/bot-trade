@@ -173,12 +173,11 @@ class Settings(BaseSettings):
     #: Turns on the built-in email + password account system
     #: (:mod:`saas.user_accounts`). Off by default: a deployment that has
     #: not deliberately opted in should not suddenly start offering account
-    #: registration to anyone who finds the URL. When on it takes precedence
-    #: over OIDC, so a deployment picks one front door rather than showing
-    #: two competing ones.
+    #: registration to anyone who finds the URL. When on, registration is enabled
+    #: alongside any configured OIDC provider, with separate identities.
     auth_accounts_enabled: bool = Field(
         default=False,
-        description="Enable built-in email/password accounts instead of OIDC.",
+        description="Enable built-in email/password accounts alongside configured OIDC.",
     )
     bottrade_base_url: str = Field(
         default="http://localhost:8501",

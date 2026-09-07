@@ -125,13 +125,9 @@ def _clear_token() -> None:
 def current_email() -> Optional[str]:
     """The signed-in address, or ``None``.
 
-    Resolved once per session and then remembered: this is read on every
-    page load, and re-checking the database each time buys nothing when
-    revocation already takes effect on the next session anyway.
+    Revalidate on every page pass so password changes, expiry and session
+    revocation invalidate an already open dashboard too.
     """
-    cached = st.session_state.get(_EMAIL_SLOT)
-    if cached:
-        return cached
     token = _read_token()
     if not token:
         return None
