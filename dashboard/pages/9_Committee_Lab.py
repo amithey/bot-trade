@@ -41,7 +41,7 @@ with c1:
     else:
         ticker = sel
 with c2:
-    interval = st.selectbox("BARS", ["1d", "1h"], index=0,
+    interval = st.selectbox("BARS", ["5m", "1h", "1d"], index=0,
                             help="Hourly history only goes back ~2 years "
                                  "(Yahoo limit). Daily goes back decades.")
 with c3:
@@ -59,11 +59,20 @@ with c6:
     fee_pct = st.select_slider("FEE/SIDE", options=[0.0, 0.05, 0.1, 0.25],
                                value=0.1, format_func=lambda f: f"{f:.2f}%")
 
-b1, b2, _sp = st.columns([1.2, 1.6, 5.2], gap="small")
+policy_col, profile_col = st.columns(2)
+with policy_col:
+    entry_filter = st.toggle("Regime + confirmed setup filter", value=True,
+                            help="Use the same deterministic entry filter as the live engine. Disable for the vote-only baseline.")
+with profile_col:
+    risk_profile = st.selectbox("Research risk profile", ["Balanced", "Conservative", "Aggressive", "Micro-Scalp"])
+st.caption("5-minute history is limited to the provider's recent window. This lab uses next-open, all-in fills and fees; live sizing, stops and slippage differ.")
+b1, b2, b3 = st.columns([1.2, 1.6, 2.2], gap="small")
 run = b1.button("RUN BACKTEST", type="primary")
 optimize = b2.button("⚡ AUTO-OPTIMIZE", help="Grid-search all entry/exit "
                      "margin combinations and pick the best risk-adjusted "
                      "setup (return − ½·|drawdown|). Takes a few seconds.")
+
+compare = b3.button("COMPARE ON FINAL 30%", help="Compare fixed vote-only and filtered policies on a later chronological segment, without parameter selection.")
 
 st.markdown("")
 
@@ -91,7 +100,8 @@ if run:
         try:
             df = _fetch(ticker, int(years * 365), interval)
             res = backtest_committee(df, ticker=ticker, interval=interval,
-                                     config=cfg, fee_pct=fee_pct)
+                                     config=cfg, fee_pct=fee_pct, entry_filter=entry_filter,
+                                     risk_profile=risk_profile)
         except Exception as exc:
             st.error(f"Backtest failed: {exc}")
             st.stop()
@@ -111,7 +121,8 @@ if optimize:
         try:
             df = _fetch(ticker, int(years * 365), interval)
             cells, best_res = optimize_committee(
-                df, ticker=ticker, interval=interval, fee_pct=fee_pct)
+                df, ticker=ticker, interval=interval, fee_pct=fee_pct,
+                entry_filter=entry_filter, risk_profile=risk_profile)
         except Exception as exc:
             st.error(f"Optimization failed: {exc}")
             st.stop()
@@ -119,9 +130,30 @@ if optimize:
     st.session_state["_committee_result"] = best_res
     st.session_state["_committee_grid"] = cells
 
+if compare:
+    from strategy.committee_backtest import compare_entry_policies
+    with st.spinner("Comparing fixed entry policies on the final 30% of bars…"):
+        try:
+            df = _fetch(ticker, int(years * 365), interval)
+            comparison = compare_entry_policies(df, ticker=ticker, interval=interval,
+                                               fee_pct=fee_pct, risk_profile=risk_profile)
+            st.session_state["_entry_comparison"] = comparison
+        except Exception as exc:
+            st.error(f"Comparison unavailable: {exc}")
+comparison = st.session_state.get("_entry_comparison")
+if comparison:
+    sample = next(iter(comparison.values()))
+    st.caption(f"Saved comparison: {sample.ticker} / {sample.interval} · {sample.start} through {sample.end}. "
+               "Fixed default vote thresholds; no optimizer applied. Does not prove future performance.")
+    st.dataframe([{"Policy": name, "Return %": r.total_return_pct,
+                   "Max drawdown %": r.max_drawdown_pct, "Trades": r.total_trades,
+                   "Win rate %": r.win_rate_pct, "Buy & hold %": r.buy_hold_return_pct}
+                  for name, r in comparison.items()], hide_index=True, width="stretch")
+
 grid = st.session_state.get("_committee_grid")
 if grid:
     best = grid[0]
+    st.caption("Optimizer ranks the same data it searched. Treat its result as in-sample fitting, not validation.")
     st.success(f"Best setup for this window: **enter at +{best.enter_votes} "
                f"net votes / exit at −{best.exit_votes}** → "
                f"{best.total_return_pct:+.1f}% return, "

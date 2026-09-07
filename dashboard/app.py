@@ -28,6 +28,9 @@ if str(_PROJECT_ROOT) not in _sys.path:
 
 import streamlit as st
 
+st.logo(str(_PROJECT_ROOT / "dashboard/assets/wordmark.svg"), size="large",
+        icon_image=str(_PROJECT_ROOT / "dashboard/assets/mark.svg"))
+
 # Started here because this router is the one file every session runs, and
 # install() is idempotent. It logs nothing unless the process is actually
 # denied the CPU — see the module docstring for the production failure it

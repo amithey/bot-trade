@@ -82,6 +82,9 @@ def backtest_committee(
     fee_pct: float = 0.1,             # taker fee per side, in percent
     committee: Optional[IndicatorCommittee] = None,
     votes: Optional[pd.DataFrame] = None,   # precomputed vote matrix
+    entry_filter: bool = False,
+    risk_profile: str = "Balanced",
+    evaluation_start: int = 0,
 ) -> CommitteeBacktestResult:
     """
     Run the committee over an OHLCV DataFrame and compute performance.
@@ -99,6 +102,10 @@ def backtest_committee(
         raise ValueError(f"Need at least 120 bars to backtest, got "
                          f"{0 if df is None else len(df)}.")
 
+    if not 0 <= evaluation_start < len(df) - 1:
+        raise ValueError("Evaluation start must leave at least two bars")
+    if not np.isfinite(fee_pct) or not 0 <= fee_pct < 10:
+        raise ValueError("Fee must be finite and between 0 and 10 percent")
     com = committee or IndicatorCommittee(config)
     cfg = com.config
     fee = fee_pct / 100.0
@@ -115,6 +122,16 @@ def backtest_committee(
     open_ = df["Open"].to_numpy(dtype=float)
     score_np = score.to_numpy()
     quorum_np = quorum.to_numpy()
+    entry_ok = np.ones(len(df), dtype=bool)
+    entry_atr = np.full(len(df), np.nan)
+    if entry_filter:
+        from strategy.research import entry_features
+        from config.user_profile import RISK_ENVELOPES
+        features = entry_features(df, risk_profile)
+        entry_ok = features["eligible"].to_numpy()
+        entry_atr = features["atr"].to_numpy()
+        threshold = RISK_ENVELOPES.get(risk_profile, RISK_ENVELOPES["Balanced"]).conf_threshold
+        entry_ok &= (.5 + score.abs()).to_numpy() >= threshold
     n = len(df)
 
     # Skip the indicator warm-up: first bar where a decent share of the
@@ -122,6 +139,8 @@ def backtest_committee(
     active = (bulls + bears).to_numpy()
     warm_candidates = np.nonzero(active >= max(cfg.min_quorum, total // 3))[0]
     warm = int(warm_candidates[0]) if len(warm_candidates) else n
+
+    warm = max(warm, evaluation_start)
 
     position = np.zeros(n, dtype=int)
     equity = np.ones(n, dtype=float)
@@ -134,7 +153,7 @@ def backtest_committee(
         # Execute the signal decided on the PREVIOUS bar at this bar's open
         if i > warm:
             prev_score, prev_q = score_np[i - 1], quorum_np[i - 1]
-            if not in_pos and prev_q and prev_score >= cfg.enter_score:
+            if not in_pos and prev_q and prev_score >= cfg.enter_score and entry_ok[i - 1] and (not entry_filter or open_[i] <= close[i - 1] + entry_atr[i - 1]):
                 fill = open_[i] * (1 + fee)
                 units = cash / fill
                 fees_paid += cash * fee
@@ -160,8 +179,8 @@ def backtest_committee(
         t = trades[-1]
         t.pnl_pct = (close[-1] * (1 - fee) / t.entry_price - 1) * 100
 
-    eq = pd.Series(equity, index=df.index)
-    bh = pd.Series(close / close[0], index=df.index)
+    eq = pd.Series(equity[evaluation_start:], index=df.index[evaluation_start:])
+    bh = pd.Series(close[evaluation_start:] / close[evaluation_start], index=df.index[evaluation_start:])
 
     def max_dd(series: pd.Series) -> float:
         peak = series.cummax()
@@ -183,10 +202,10 @@ def backtest_committee(
     wins = [t for t in closed if (t.pnl_pct or 0) > 0]
 
     return CommitteeBacktestResult(
-        ticker=ticker, interval=interval, bars=n,
-        start=df.index[0], end=df.index[-1],
-        equity=eq, buy_hold=bh, score=score,
-        position=pd.Series(position, index=df.index),
+        ticker=ticker, interval=interval, bars=n - evaluation_start,
+        start=df.index[evaluation_start], end=df.index[-1],
+        equity=eq, buy_hold=bh, score=score.iloc[evaluation_start:],
+        position=pd.Series(position[evaluation_start:], index=df.index[evaluation_start:]),
         total_return_pct=round(float(eq.iloc[-1] - 1) * 100, 2),
         buy_hold_return_pct=round(float(bh.iloc[-1] - 1) * 100, 2),
         alpha_pct=round(float(eq.iloc[-1] - bh.iloc[-1]) * 100, 2),
@@ -225,6 +244,8 @@ def optimize_committee(
     interval: str = "1d",
     fee_pct: float = 0.1,
     margins: tuple[int, ...] = (2, 4, 6, 8, 10, 12, 14),
+    entry_filter: bool = False,
+    risk_profile: str = "Balanced",
 ) -> tuple[list[OptimizationCell], CommitteeBacktestResult]:
     """
     Grid-search entry/exit vote margins and rank by a risk-adjusted score:
@@ -251,7 +272,7 @@ def optimize_committee(
             res = backtest_committee(
                 df, ticker=ticker, interval=interval, config=cfg,
                 fee_pct=fee_pct, committee=IndicatorCommittee(cfg),
-                votes=votes,
+                votes=votes, entry_filter=entry_filter, risk_profile=risk_profile,
             )
             cells.append(OptimizationCell(
                 enter_votes=ev, exit_votes=xv,
@@ -270,6 +291,7 @@ def optimize_committee(
     best_res = backtest_committee(
         df, ticker=ticker, interval=interval, config=best_cfg,
         fee_pct=fee_pct, committee=IndicatorCommittee(best_cfg), votes=votes,
+        entry_filter=entry_filter, risk_profile=risk_profile,
     )
     return cells, best_res
 
@@ -305,7 +327,7 @@ def fetch_history(ticker: str, days: int, interval: str = "1d") -> pd.DataFrame:
     if df is None or df.empty:
         raise RuntimeError(f"No {interval} data returned for '{ticker}'.")
     if df.index.tzinfo is not None:
-        df.index = df.index.tz_localize(None)
+        df.index = df.index.tz_convert("UTC").tz_localize(None)
     cols = [c for c in ["Open", "High", "Low", "Close", "Volume"]
             if c in df.columns]
     df = df[cols].astype(float).sort_index()
@@ -335,3 +357,20 @@ if __name__ == "__main__":
     print(f"  Trades {res.total_trades} · win {res.win_rate_pct:.0f}% · "
           f"in-market {res.time_in_market_pct:.0f}% · "
           f"fees {res.fees_paid_pct:.2f}%")
+
+
+def compare_entry_policies(df, *, ticker="", interval="5m", fee_pct=.1, risk_profile="Balanced"):
+    """Fixed-policy comparison on the last 30%; preceding bars warm indicators only.
+
+    This is an untouched chronological evaluation slice, not parameter fitting.
+    It compares entry policies using the lab's all-in, next-open model; live
+    stops, slippage, sizing and partial exits are not simulated here.
+    """
+    if len(df) < 400:
+        raise ValueError("Need 400 bars for warm-up plus a chronological evaluation slice")
+    votes = IndicatorCommittee().vote_matrix(df)
+    start = max(200, int(len(df) * .7))
+    return {name: backtest_committee(df, ticker=ticker, interval=interval,
+            fee_pct=fee_pct, votes=votes, entry_filter=enabled,
+            risk_profile=risk_profile, evaluation_start=start)
+            for name, enabled in (("Vote-only baseline", False), ("Regime + setup filter", True))}

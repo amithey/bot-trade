@@ -1,5 +1,6 @@
 """Reusable workspace components. These render supplied data without fetching it."""
 from html import escape
+from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -12,7 +13,7 @@ def page_header(title: str, description: str, *, section: str) -> None:
         f'<div class="workspace-eyebrow">{escape(section)}</div>'
         f'<h1 class="page-title">{escape(title)}</h1>'
         f'<p class="page-sub">{escape(description)}</p></div>'
-        '<span class="badge badge-blue">BotTrade workspace</span></div>',
+        '<div class="workspace-context"><i></i> BotTrade <span> / </span> Workspace</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -67,8 +68,13 @@ def render_desk_sidebar(state, portfolio, watchlist, *, risk: str, cap_pct: floa
                 f'<div style="font-size:1.4rem;font-weight:600;color:{color}">'
                 f'{escape(decision.action)}</div>', unsafe_allow_html=True,
             )
-            st.caption(f"Signal confidence {decision.confidence_score:.0%}")
+            label = "Vote strength" if state.get("strategy_mode") == "COMMITTEE" else "Model confidence"
+            st.caption(f"{label} {decision.confidence_score:.0%} · not a win probability")
             st.caption(decision.reasoning[:220])
+        research = state.get("last_research") or {}
+        if research.get("regime"):
+            st.caption(f"{research['regime']} · {research['setup']}")
+            st.caption(research.get("explanation", ""))
         st.markdown(
             '<div class="desk-facts">'
             f'<span>Strategy</span><b>{escape(state.get("strategy_mode", "—"))}</b>'
@@ -77,3 +83,50 @@ def render_desk_sidebar(state, portfolio, watchlist, *, risk: str, cap_pct: floa
             f'<span>Cycle</span><b>{state["interval_sec"]}s</b>'
             '<span>Execution</span><b>Paper</b></div>', unsafe_allow_html=True,
         )
+
+
+def render_entry_research(report) -> None:
+    if not report:
+        st.info("No research snapshot yet. The next completed candle will produce an entry assessment.")
+        return
+    if report.get("status") == "DATA_BLOCKED":
+        st.warning(report["reason"])
+        return
+    st.caption(f"{report['ticker']} · {report['interval']} · candle closed {report['bar_closed_at']}")
+    cols = st.columns(3)
+    cols[0].metric("Market regime", report["regime"])
+    cols[1].metric("Setup", report["setup"])
+    cols[2].metric("New entry gate", "Eligible" if report["entry_allowed"] else "Blocked")
+    st.write(report["explanation"])
+    if report.get("raw_action"):
+        st.caption(f"Strategy candidate: {report['raw_action']} → filtered signal: {report.get('filtered_action', '—')}. "
+                   "An eligible signal still needs the account's confidence, cash and safety checks.")
+    evidence, context = st.columns([1.35, 1], gap="large")
+    with evidence:
+        st.dataframe(report["checks"], hide_index=True, width="stretch",
+                     column_config={"name": "Check", "passed": "Passed", "detail": "Requirement"})
+        with st.expander("Technical evidence", expanded=True):
+            st.dataframe([{"Metric": k, "Value": v} for k, v in report["metrics"].items()],
+                         hide_index=True, width="stretch")
+            st.caption("Support/resistance and volume averages exclude the signal candle. Entry gates are rule-based hypotheses, not return forecasts.")
+    with context:
+        with st.expander("Fundamental context"):
+            metrics = report.get("fundamentals") or {}
+            if metrics:
+                st.dataframe([{"Metric": k, "Value": str(v)} for k, v in metrics.items()], hide_index=True, width="stretch")
+            else:
+                st.caption("No company fundamentals available. Corporate P/E, margins and cash flow are not applicable to BTC.")
+        with st.expander("News & macro sources", expanded=True):
+            news = report.get("news_context") or {}
+            items = news.get("items", [])
+            if not items:
+                st.caption("Loading public sources in the background…" if news.get("status") == "loading"
+                           else "No dated headlines from the last 72 hours are available. Missing news is not neutral sentiment.")
+            for item in items:
+                parsed = urlparse(item["url"])
+                title = escape(item["title"])
+                if parsed.scheme in ("http", "https") and parsed.netloc:
+                    title = f'<a href="{escape(item["url"], quote=True)}" target="_blank" rel="noopener noreferrer">{title}</a>'
+                st.markdown(title, unsafe_allow_html=True)
+                st.caption(f"{item['source']} · {item['published']}")
+            st.caption("Public headlines are context, not an automatic buy/sell trigger. Committee uses technical rules; AI and Hybrid also evaluate supplied news and fundamentals.")
