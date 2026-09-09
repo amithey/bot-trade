@@ -382,6 +382,23 @@ _now_html = (f'<span style="color:{TEXT_DIM};font-size:.72rem;'
 from dashboard.components import render_agent_summary
 render_agent_summary(state)
 
+# Keep live execution visible even when the latest assessment is unchanged.
+st.markdown(
+    '<div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;'
+    'margin:.6rem 0;">'
+    f'{_live_badge}{_cycle_html}{_next_html}{_halt_html}</div>',
+    unsafe_allow_html=True,
+)
+st.caption(f"Current activity: {state.get('activity') or _stage}")
+_last_started = state.get("cycle_started")
+st.caption(
+    f"Last cycle started (server time): {_last_started.strftime('%Y-%m-%d %H:%M:%S') if _last_started else 'Not yet'}"
+    f" · Screen updated (server time): {datetime.now().strftime('%H:%M:%S')}"
+    + (f" · Refreshes every {_refresh_ms // 1000}s" if state["running"] else "")
+)
+if state["running"] and _stage == "SLEEP":
+    st.caption("The agent is waiting between checks. An unchanged assessment does not mean a new trade was placed; see Activity for execution details.")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ██  KPI ROW
 # ─────────────────────────────────────────────────────────────────────────────
