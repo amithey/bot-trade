@@ -30,6 +30,27 @@ def test_balanced_blocks_a_bounce_inside_a_downtrend():
     assert not research.entry_allowed
 
 
+def short_breakdown_bars():
+    df = bars(down=True)
+    previous = float(df.Close.iloc[-2])
+    df.loc[df.index[-1], ["Open", "High", "Low", "Close", "Volume"]] = [
+        previous + 0.1,
+        previous + 0.3,
+        previous - 0.9,
+        previous - 0.6,
+        1800.0,
+    ]
+    return df
+
+
+def test_downtrend_breakdown_becomes_a_short_setup():
+    research = analyze_entry(short_breakdown_bars())
+    assert research.regime == "DOWNTREND"
+    assert research.setup == "SHORT_TREND_BREAKDOWN"
+    assert research.signal_side == "SHORT"
+    assert research.entry_allowed
+
+
 def test_confirmed_trend_breakout_is_eligible():
     research = analyze_entry(bars())
     assert research.regime == "UPTREND"
@@ -166,6 +187,18 @@ def test_exit_signal_is_not_vetoed_by_entry_rules(live):
     assert eng.portfolio.trade_log[-1].action == "SELL"
 
 
+def test_live_committee_can_open_and_profitably_cover_a_short(live):
+    eng, snap = live(short_breakdown_bars(), action="SELL")
+    eng._cycle_once()
+    assert eng.portfolio.trade_log[-1].action == "SHORT"
+    assert eng.portfolio.positions["BTC-USD"].side == "SHORT"
+    entry = eng.portfolio.positions["BTC-USD"].avg_entry_price
+    eng.portfolio.update_price("BTC-USD", entry * 0.99)
+    covered = eng.portfolio.cover("BTC-USD", entry * 0.99)
+    assert covered.action == "COVER"
+    assert covered.realized_pnl > 0
+
+
 def test_holdout_uses_only_later_dates_and_equal_evaluation_window():
     df = bars(n=600)
     results = compare_entry_policies(df)
@@ -270,9 +303,9 @@ def test_research_version_and_evidence_reach_persisted_trade(live):
     eng, _ = live(bars())
     eng._cycle_once()
     report = eng.snapshot()["last_research"]
-    assert report["policy_version"] == "research-v2"
+    assert report["policy_version"] == "research-v3"
     assert report["fundamental_analysis"]["status"] == "NOT_APPLICABLE"
-    assert "research-v2" in eng.portfolio.trade_log[-1].reasoning
+    assert "research-v3" in eng.portfolio.trade_log[-1].reasoning
     assert "closed" in eng.portfolio.trade_log[-1].reasoning
 
 
@@ -298,7 +331,59 @@ def test_ai_modes_receive_measured_research_and_playbook(live, monkeypatch, mode
     monkeypatch.setattr(eng, "_ai_engine", lambda: NS(evaluate_market=evaluate))
     monkeypatch.setattr(eng, "_shared_decision", lambda key, **kwargs: kwargs["compute"]())
     eng._cycle_once()
-    assert captured and "research-v2" in captured[0]
+    assert captured and "research-v3" in captured[0]
     assert "failed_resistance_break" in captured[0]
     assert "NOT_APPLICABLE" in captured[0]
     assert "No recorded exits" in captured[0]
+
+
+@pytest.mark.parametrize("move", [.96, 1.04])
+def test_short_entry_rejects_post_signal_price_gap(live, move):
+    df = short_breakdown_bars()
+    row = df.iloc[-1:].copy()
+    row.index = row.index + pd.Timedelta(minutes=5)
+    row.loc[:, ["Open", "High", "Low", "Close"]] *= move
+    eng, _ = live(pd.concat([df, row]), action="SELL")
+    eng._cycle_once()
+    assert not eng.portfolio.trade_log
+    assert "one ATR" in eng.snapshot()["last_research"]["explanation"]
+
+
+def test_short_entry_rejects_reclaimed_support(live):
+    df = short_breakdown_bars()
+    row = df.iloc[-1:].copy()
+    row.index = row.index + pd.Timedelta(minutes=5)
+    support = float(df.Low.iloc[-21:-1].min())
+    row.loc[:, ["Open", "High", "Low", "Close"]] = support + .05
+    eng, _ = live(pd.concat([df, row]), action="SELL")
+    eng._cycle_once()
+    assert not eng.portfolio.trade_log
+    assert "Breakdown failed" in eng.snapshot()["last_research"]["explanation"]
+
+
+def test_ai_buy_cannot_use_a_short_setup_as_long_permission(live, monkeypatch):
+    eng, _ = live(short_breakdown_bars())
+    eng._strategy_mode = "AI"
+    eng._retriever = NS(get_relevant_strategies=lambda *a, **k: NS(chunks=[]))
+    decision = CommitteeVerdict("BUY", .5, 28, 9, 1, 38, True).to_trading_decision("BTC-USD")
+    monkeypatch.setattr(eng, "_ai_engine", lambda: NS(evaluate_market=lambda *a, **k: decision))
+    monkeypatch.setattr(eng, "_shared_decision", lambda key, **kwargs: kwargs["compute"]())
+    eng._cycle_once()
+    assert not eng.portfolio.trade_log
+    assert "direction" in eng.snapshot()["last_research"]["explanation"]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1., 0.])
+def test_execution_entry_check_rejects_invalid_market_values(value):
+    from strategy.briefing import execution_entry_check
+    report = {"signal_side": "SHORT", "metrics": {"close": 100., "atr": 1.}}
+    assert not execution_entry_check(report, value, side="SHORT")[0]
+
+
+def test_short_cover_is_allowed_when_new_entries_are_blocked(live):
+    eng, snap = live(bars(down=True), action="BUY")
+    eng.portfolio.open_short("BTC-USD", float(snap.data.Close.iloc[-1]), cash_amount=500)
+    eng._safety.manual_block("No new exposure")
+    eng._cycle_once()
+    assert not eng.portfolio.positions
+    assert eng.portfolio.trade_log[-1].action == "COVER"

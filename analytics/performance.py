@@ -269,7 +269,7 @@ def compute_metrics(
     eq_s = eq["equity"].astype(float)
 
     # ── Trade-based stats ───────────────────────────────────────────────
-    sells = trades[trades["action"].isin(["SELL", "FORCE_CLOSE"])]
+    sells = trades[trades["action"].isin(["SELL", "COVER", "FORCE_CLOSE"])]
     pnls = sells["realized_pnl"].astype(float)
     n_round_trips = int(len(pnls))
     wins = pnls[pnls > 0]
@@ -287,9 +287,9 @@ def compute_metrics(
     holding_secs: list[float] = []
     open_buys: dict[str, datetime] = {}
     for _, r in trades.iterrows():
-        if r["action"] == "BUY":
+        if r["action"] in ("BUY", "SHORT"):
             open_buys[r["ticker"]] = r["executed_at"]
-        elif r["action"] in ("SELL", "FORCE_CLOSE") and r["ticker"] in open_buys:
+        elif r["action"] in ("SELL", "COVER", "FORCE_CLOSE") and r["ticker"] in open_buys:
             entry = open_buys.pop(r["ticker"])
             try:
                 holding_secs.append((r["executed_at"] - entry).total_seconds())

@@ -19,10 +19,10 @@ _WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 def pnl_by_ticker(trade_log: Iterable) -> pd.DataFrame:
     """Return DataFrame(ticker, n_trades, total_pnl, avg_pnl, win_rate)
-    sorted by total_pnl descending. Only counts SELL/FORCE_CLOSE rows.
+    sorted by total_pnl descending. Only counts SELL/COVER/FORCE_CLOSE rows.
     """
     df = _to_records_df(trade_log)
-    sells = df[df["action"].isin(["SELL", "FORCE_CLOSE"])].copy()
+    sells = df[df["action"].isin(["SELL", "COVER", "FORCE_CLOSE"])].copy()
     if sells.empty:
         return pd.DataFrame(
             columns=["ticker", "n_trades", "total_pnl", "avg_pnl", "win_rate"]
@@ -41,7 +41,7 @@ def pnl_by_ticker(trade_log: Iterable) -> pd.DataFrame:
 def pnl_by_weekday(trade_log: Iterable) -> pd.DataFrame:
     """Return DataFrame(weekday, n_trades, total_pnl, avg_pnl) ordered Mon→Sun."""
     df = _to_records_df(trade_log)
-    sells = df[df["action"].isin(["SELL", "FORCE_CLOSE"])].copy()
+    sells = df[df["action"].isin(["SELL", "COVER", "FORCE_CLOSE"])].copy()
     if sells.empty:
         return pd.DataFrame(columns=["weekday", "n_trades", "total_pnl", "avg_pnl"])
     sells["realized_pnl"] = sells["realized_pnl"].astype(float)
@@ -65,7 +65,7 @@ def pnl_by_weekday(trade_log: Iterable) -> pd.DataFrame:
 def pnl_by_hour(trade_log: Iterable) -> pd.DataFrame:
     """Return DataFrame(hour, n_trades, total_pnl) for hours 0..23 (UTC)."""
     df = _to_records_df(trade_log)
-    sells = df[df["action"].isin(["SELL", "FORCE_CLOSE"])].copy()
+    sells = df[df["action"].isin(["SELL", "COVER", "FORCE_CLOSE"])].copy()
     if sells.empty:
         return pd.DataFrame(columns=["hour", "n_trades", "total_pnl"])
     sells["realized_pnl"] = sells["realized_pnl"].astype(float)
@@ -89,8 +89,8 @@ def win_rate_by_ticker(trade_log: Iterable) -> pd.DataFrame:
 
 def trade_durations(trade_log: Iterable) -> pd.DataFrame:
     """Return DataFrame of paired trips: ticker, entry_at, exit_at,
-    duration_hours, realized_pnl. Pairs each BUY with the next SELL
-    on the same ticker.
+    duration_hours, realized_pnl. Pairs long or short entries with exits
+    on the same ticker. Multiple entries and partial exits are not aggregated.
     """
     df = _to_records_df(trade_log)
     if df.empty:
@@ -101,9 +101,9 @@ def trade_durations(trade_log: Iterable) -> pd.DataFrame:
     rows: list[dict] = []
     open_buys: dict[str, dict] = {}
     for _, r in df.iterrows():
-        if r["action"] == "BUY":
+        if r["action"] in ("BUY", "SHORT"):
             open_buys[r["ticker"]] = r.to_dict()
-        elif r["action"] in ("SELL", "FORCE_CLOSE") and r["ticker"] in open_buys:
+        elif r["action"] in ("SELL", "COVER", "FORCE_CLOSE") and r["ticker"] in open_buys:
             entry = open_buys.pop(r["ticker"])
             try:
                 dur_h = (r["executed_at"] - entry["executed_at"]).total_seconds() / 3600.0
@@ -111,7 +111,8 @@ def trade_durations(trade_log: Iterable) -> pd.DataFrame:
                 dur_h = 0.0
             ep = float(entry.get("price") or 0)
             xp = float(r.get("price") or 0)
-            pnl_pct = ((xp - ep) / ep * 100.0) if ep > 0 else 0.0
+            direction = -1 if entry["action"] == "SHORT" else 1
+            pnl_pct = (direction * (xp - ep) / ep * 100.0) if ep > 0 else 0.0
             rows.append({
                 "ticker": r["ticker"],
                 "entry_at": entry["executed_at"],

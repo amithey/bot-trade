@@ -40,6 +40,8 @@ class CommitteeTrade:
     entry_price: float
     exit_price: Optional[float]
     pnl_pct: Optional[float]          # net of fees, None while open
+    side: str = "LONG"
+    start_equity: float = field(default=1.0, repr=False)
 
 
 @dataclass
@@ -53,7 +55,7 @@ class CommitteeBacktestResult:
     equity: pd.Series                 # strategy equity curve (normalized 1.0)
     buy_hold: pd.Series               # buy & hold curve (normalized 1.0)
     score: pd.Series                  # committee net score per bar
-    position: pd.Series               # 1 = long, 0 = cash
+    position: pd.Series               # 1 = long, -1 = short, 0 = cash
 
     total_return_pct: float
     buy_hold_return_pct: float
@@ -124,18 +126,32 @@ def backtest_committee(
     quorum_np = quorum.to_numpy()
     entry_ok = np.ones(len(df), dtype=bool)
     execution_ok = np.ones(len(df), dtype=bool)
+    research_exit = np.zeros(len(df), dtype=bool)
+    short_research_exit = np.zeros(len(df), dtype=bool)
+    signal_side = np.full(len(df), "LONG", dtype=object)
+    required_score = np.full(len(df), np.inf)
+    stop_loss = take_profit = None
     if entry_filter:
         from strategy.research import entry_features
         from config.user_profile import RISK_ENVELOPES
         features = entry_features(df, risk_profile)
         entry_ok = features["eligible"].to_numpy()
+        research_exit = features["exit_recommended"].to_numpy()
+        short_research_exit = features["short_exit_recommended"].to_numpy()
+        signal_side = features["signal_side"].to_numpy()
+        required_score = features["required_committee_score"].to_numpy()
         atr = features["atr"].to_numpy()
         setups = features["setup"].to_numpy()
         resistance = features["resistance"].to_numpy()
         execution_ok[1:] = ((np.abs(open_[1:] - close[:-1]) <= atr[:-1])
                             & ((setups[:-1] != "TREND_BREAKOUT") | (open_[1:] > resistance[:-1])))
-        threshold = RISK_ENVELOPES.get(risk_profile, RISK_ENVELOPES["Balanced"]).conf_threshold
-        entry_ok &= (.5 + score.abs()).to_numpy() >= threshold
+        envelope = RISK_ENVELOPES.get(
+            risk_profile, RISK_ENVELOPES["Balanced"],
+        )
+        threshold = envelope.conf_threshold
+        stop_loss = envelope.stop_loss_pct / 100
+        take_profit = envelope.take_profit_pct / 100
+        entry_ok &= features["signal_confidence"].to_numpy() >= threshold
     n = len(df)
 
     # Skip the indicator warm-up: first bar where a decent share of the
@@ -148,40 +164,174 @@ def backtest_committee(
 
     position = np.zeros(n, dtype=int)
     equity = np.ones(n, dtype=float)
-    cash, units = 1.0, 0.0
-    in_pos = False
+    cash, units, collateral = 1.0, 0.0, 0.0
+    side = 0
+    entry_index: Optional[int] = None
     fees_paid = 0.0
     trades: list[CommitteeTrade] = []
 
+    min_bars = {
+        "Conservative": 9, "Balanced": 6,
+        "Aggressive": 4, "Micro-Scalp": 3,
+    }.get(risk_profile, 6)
+    max_bars = {
+        "Conservative": 48, "Balanced": 72,
+        "Aggressive": 96, "Micro-Scalp": 24,
+    }.get(risk_profile, 72)
+
     for i in range(n):
-        # Execute the signal decided on the PREVIOUS bar at this bar's open
+        # Execute the signal decided on the previous completed bar.
         if i > warm:
             prev_score, prev_q = score_np[i - 1], quorum_np[i - 1]
-            if not in_pos and prev_q and prev_score >= cfg.enter_score and entry_ok[i - 1] and execution_ok[i]:
-                fill = open_[i] * (1 + fee)
-                units = cash / fill
-                fees_paid += cash * fee
-                cash, in_pos = 0.0, True
-                trades.append(CommitteeTrade(
-                    entry_time=df.index[i], exit_time=None,
-                    entry_price=fill, exit_price=None, pnl_pct=None))
-            elif in_pos and prev_q and prev_score <= cfg.exit_score:
-                fill = open_[i] * (1 - fee)
-                cash = units * fill
-                fees_paid += units * open_[i] * fee
-                units, in_pos = 0.0, False
-                t = trades[-1]
-                t.exit_time = df.index[i]
-                t.exit_price = fill
-                t.pnl_pct = (fill / t.entry_price - 1) * 100
+            if side:
+                trade = trades[-1]
+                entry_price = trade.entry_price
+                if side == 1:
+                    stop_hit = (
+                        entry_filter and stop_loss is not None
+                        and float(df["Low"].iloc[i])
+                        <= entry_price * (1 - stop_loss)
+                    )
+                    target_hit = (
+                        entry_filter and take_profit is not None
+                        and float(df["High"].iloc[i])
+                        >= entry_price * (1 + take_profit)
+                    )
+                    stop_price = entry_price * (1 - (stop_loss or 0))
+                    target_price = entry_price * (1 + (take_profit or 0))
+                    signal_exit = (
+                        (prev_q and prev_score <= cfg.exit_score)
+                        or (entry_filter and research_exit[i - 1])
+                    )
+                else:
+                    stop_hit = (
+                        entry_filter and stop_loss is not None
+                        and float(df["High"].iloc[i])
+                        >= entry_price * (1 + stop_loss)
+                    )
+                    target_hit = (
+                        entry_filter and take_profit is not None
+                        and float(df["Low"].iloc[i])
+                        <= entry_price * (1 - take_profit)
+                    )
+                    stop_price = entry_price * (1 + (stop_loss or 0))
+                    target_price = entry_price * (1 - (take_profit or 0))
+                    signal_exit = (
+                        (prev_q and prev_score >= cfg.enter_score)
+                        or (entry_filter and short_research_exit[i - 1])
+                    )
 
-        position[i] = 1 if in_pos else 0
-        equity[i] = cash + units * close[i]
+                exit_price = stop_price if stop_hit else (
+                    target_price if target_hit else None
+                )
+                if exit_price is None:
+                    age = i - (
+                        entry_index if entry_index is not None else i
+                    )
+                    open_return = side * (open_[i] / entry_price - 1)
+                    managed_exit = (
+                        signal_exit
+                        and age >= min_bars
+                        and (
+                            open_return >= 0.0025
+                            or open_return <= -0.0045
+                        )
+                    )
+                    if managed_exit or (entry_filter and age >= max_bars):
+                        exit_price = open_[i]
+                    elif not entry_filter and signal_exit:
+                        exit_price = open_[i]
+
+                if exit_price is not None:
+                    if side == 1:
+                        fill = exit_price * (1 - fee)
+                        cash = units * fill
+                        fees_paid += units * exit_price * fee
+                    else:
+                        exit_fee = units * exit_price * fee
+                        cash = (
+                            collateral
+                            + (entry_price - exit_price) * units
+                            - exit_fee
+                        )
+                        fill = exit_price * (1 + fee)
+                        fees_paid += exit_fee
+                    trade.exit_time = df.index[i]
+                    trade.exit_price = fill
+                    trade.pnl_pct = (
+                        (cash - trade.start_equity)
+                        / trade.start_equity
+                        * 100
+                    )
+                    units, collateral, side = 0.0, 0.0, 0
+                    entry_index = None
+
+            if side == 0 and prev_q and entry_ok[i - 1] and execution_ok[i]:
+                wanted_side = (
+                    str(signal_side[i - 1]) if entry_filter else "LONG"
+                )
+                threshold_score = (
+                    required_score[i - 1]
+                    if entry_filter else cfg.enter_score
+                )
+                direction_ok = (
+                    prev_score <= threshold_score
+                    if wanted_side == "SHORT"
+                    else prev_score >= threshold_score
+                )
+                if direction_ok:
+                    start_equity = cash
+                    if wanted_side == "SHORT":
+                        collateral = cash / (1 + fee)
+                        entry_fee = collateral * fee
+                        units = collateral / open_[i]
+                        fees_paid += entry_fee
+                        cash, side = 0.0, -1
+                        fill = open_[i]
+                    else:
+                        fill = open_[i] * (1 + fee)
+                        units = cash / fill
+                        fees_paid += cash * fee
+                        cash, side = 0.0, 1
+                    entry_index = i
+                    trade = CommitteeTrade(
+                        entry_time=df.index[i],
+                        exit_time=None,
+                        entry_price=fill,
+                        exit_price=None,
+                        pnl_pct=None,
+                        side=wanted_side,
+                        start_equity=start_equity,
+                    )
+                    trades.append(trade)
+
+        position[i] = side
+        if side == 1:
+            equity[i] = cash + units * close[i]
+        elif side == -1:
+            equity[i] = (
+                cash + collateral
+                + (trades[-1].entry_price - close[i]) * units
+            )
+        else:
+            equity[i] = cash
 
     # Mark any open trade to market at the last close
     if trades and trades[-1].exit_price is None:
         t = trades[-1]
-        t.pnl_pct = (close[-1] * (1 - fee) / t.entry_price - 1) * 100
+        if t.side == "SHORT":
+            marked_cash = (
+                collateral
+                + (t.entry_price - close[-1]) * units
+                - units * close[-1] * fee
+            )
+            t.pnl_pct = (
+                marked_cash / t.start_equity - 1
+            ) * 100
+        else:
+            t.pnl_pct = (
+                close[-1] * (1 - fee) / t.entry_price - 1
+            ) * 100
 
     eq = pd.Series(equity[evaluation_start:], index=df.index[evaluation_start:])
     bh = pd.Series(close[evaluation_start:] / close[evaluation_start], index=df.index[evaluation_start:])
@@ -218,7 +368,7 @@ def backtest_committee(
         drawdown_edge_pp=round(strat_dd - bh_dd, 2),
         downside_captured_pct=round(dn_capture, 1),
         upside_captured_pct=round(up_capture, 1),
-        time_in_market_pct=round(float(position[warm:].mean() * 100)
+        time_in_market_pct=round(float(np.abs(position[warm:]).mean() * 100)
                                  if n > warm else 0.0, 1),
         win_rate_pct=round(len(wins) / len(closed) * 100, 1) if closed else 0.0,
         total_trades=len(trades),

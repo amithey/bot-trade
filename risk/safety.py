@@ -173,7 +173,7 @@ class SafetyController:
             )
 
         log = list(trade_log)
-        sells = [r for r in log if getattr(r, "action", None) in ("SELL", "FORCE_CLOSE")]
+        sells = [r for r in log if getattr(r, "action", None) in ("SELL", "COVER", "FORCE_CLOSE")]
 
         # --- Consecutive losses ---
         consec = 0

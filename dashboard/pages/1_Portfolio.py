@@ -34,6 +34,9 @@ page_header('Portfolio', 'Positions, realized returns and account risk in one wo
 port = st.session_state["portfolio"]
 summ = port.get_summary()
 
+from dashboard.profit_protection import render_profit_protection
+render_profit_protection(port, current_engine())
+
 # ── Headline KPIs ───────────────────────────────────────────────────────────
 closed = [t for t in port.trade_log if "SELL" in t.action]
 wins   = [t for t in closed if t.realized_pnl > 0]

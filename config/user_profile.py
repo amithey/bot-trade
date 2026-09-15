@@ -80,19 +80,19 @@ RISK_ENVELOPES: dict[str, RiskEnvelope] = {
     "Conservative": RiskEnvelope(
         size_min_pct=5.0,   size_max_pct=15.0,
         conf_threshold=0.65,
-        stop_loss_pct=1.5,  take_profit_pct=2.5,
+        stop_loss_pct=0.6,  take_profit_pct=1.0,
         allow_pyramiding=False,
     ),
     "Balanced": RiskEnvelope(
         size_min_pct=15.0,  size_max_pct=30.0,
         conf_threshold=0.55,
-        stop_loss_pct=2.5,  take_profit_pct=5.0,
+        stop_loss_pct=0.8,  take_profit_pct=1.4,
         allow_pyramiding=False,
     ),
     "Aggressive": RiskEnvelope(
         size_min_pct=25.0,  size_max_pct=60.0,
         conf_threshold=0.45,
-        stop_loss_pct=4.0,  take_profit_pct=10.0,
+        stop_loss_pct=1.2,  take_profit_pct=2.4,
         allow_pyramiding=True,
     ),
     # Micro-Scalp: many small trades aiming for 0.3-1.5% per round-trip.
@@ -101,7 +101,7 @@ RISK_ENVELOPES: dict[str, RiskEnvelope] = {
     "Micro-Scalp": RiskEnvelope(
         size_min_pct=8.0,   size_max_pct=25.0,
         conf_threshold=0.50,
-        stop_loss_pct=0.6,  take_profit_pct=1.2,
+        stop_loss_pct=0.4,  take_profit_pct=0.8,
         allow_pyramiding=False,
     ),
 }
