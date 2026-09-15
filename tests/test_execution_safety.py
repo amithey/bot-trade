@@ -62,3 +62,34 @@ def test_bad_order_cannot_corrupt_account(value, operation):
         else:
             port.update_price("AAPL", value)
     assert (port.cash, port.get_total_value(), len(port.trade_log)) == before
+
+
+def test_collateralised_short_marks_profit_and_covers():
+    port = LivePortfolio(10_000, fee_rate=0.001)
+    opened = port.open_short(
+        "BTC-USD", 100.0, cash_amount=2_000, reasoning="breakdown",
+    )
+    assert opened.action == "SHORT"
+    assert port.positions["BTC-USD"].side == "SHORT"
+    value_after_entry = port.get_total_value()
+    assert value_after_entry == pytest.approx(9_998.0)
+
+    port.update_price("BTC-USD", 95.0)
+    assert port.positions["BTC-USD"].unrealized_pnl > 0
+    assert port.get_total_value() > value_after_entry
+
+    covered = port.cover("BTC-USD", 95.0, reasoning="target")
+    assert covered.action == "COVER"
+    assert covered.realized_pnl > 0
+    assert not port.positions
+    assert port.get_total_value() > 10_000
+
+
+def test_short_loss_reduces_equity_and_force_close_covers():
+    port = LivePortfolio(10_000, fee_rate=0)
+    port.open_short("BTC-USD", 100.0, cash_amount=2_000)
+    port.update_price("BTC-USD", 105.0)
+    assert port.get_total_value() == pytest.approx(9_900.0)
+    closed = port.force_close("BTC-USD", 105.0)
+    assert closed.action == "FORCE_CLOSE"
+    assert closed.realized_pnl == pytest.approx(-100.0)

@@ -70,8 +70,20 @@ class LiveTradingEngine:
         engine,
         max_events: int = 500,
         tenant=None,
+        *,
+        profit_protection_config=None,
+        protection_quote_provider=None,
+        protection_poll_seconds=10.0,
     ) -> None:
         self.portfolio   = portfolio
+        from risk.profit_protection import ProfitProtectionConfig
+        if not math.isfinite(protection_poll_seconds) or protection_poll_seconds <= 0:
+            raise ValueError("Protection polling interval must be positive")
+        self._profit_config = profit_protection_config or ProfitProtectionConfig()
+        self._protection_quote_provider = protection_quote_provider
+        self._protection_poll_seconds = protection_poll_seconds
+        self._protection_thread = None
+        self._protection_status = {}
         self._fetcher    = fetcher
         self._retriever  = retriever
         self._engine     = engine
@@ -164,13 +176,18 @@ class LiveTradingEngine:
     def start(self) -> None:
         # If stop() was just requested, the old worker may still be unwinding.
         # Do not clear its shared stop flag by starting a second loop.
-        if self._thread is not None and self._thread.is_alive():
+        if any(t is not None and t.is_alive()
+               for t in (self._thread, self._protection_thread)):
             return
         self._stop_flag.clear()
         self._halt_reason = ""
         self._thread = threading.Thread(
             target=self._run_loop, name="bt_live_engine", daemon=True,
         )
+        self._protection_thread = threading.Thread(
+            target=self._protection_loop, name="bt_profit_protection", daemon=True,
+        )
+        self._protection_thread.start()
         self._thread.start()
         self._emit(PulseStage.IDLE, f"Engine started — watching {self._ticker}",
                    level="INFO")
@@ -199,8 +216,8 @@ class LiveTradingEngine:
                 continue
             price = float(pos.current_price or pos.avg_entry_price)
             try:
-                tr = self.portfolio.sell(
-                    tk, price, action_label="FORCE_CLOSE",
+                tr = self.portfolio.force_close(
+                    tk, price,
                     reasoning=f"PANIC STOP — {reason}",
                 )
                 closed.append({
@@ -935,8 +952,8 @@ class LiveTradingEngine:
         """Close every open position at its last known price (used on halt)."""
         for tk, pos in list(self.portfolio.positions.items()):
             try:
-                tr = self.portfolio.sell(
-                    tk, pos.current_price, action_label="FORCE_CLOSE",
+                tr = self.portfolio.force_close(
+                    tk, pos.current_price,
                     reasoning=reason,
                 )
                 emoji = "🟢" if tr.realized_pnl >= 0 else "🔴"
@@ -996,6 +1013,7 @@ class LiveTradingEngine:
                        level="ERROR",
                        meta={"traceback": traceback.format_exc()})
         finally:
+            self._stop_flag.set()
             # A crashed or stopped loop still owes the user their trades.
             self._checkpoint()
             self._emit(PulseStage.STOPPED, "Loop exited", level="WARN")
@@ -1016,6 +1034,81 @@ class LiveTradingEngine:
                        f"Could not save portfolio: {type(exc).__name__}",
                        level="WARN")
 
+    def _protect_quote(self, ticker, price, requested_at, revision):
+        """Shared by the monitor and the pre-analysis check; never calls AI."""
+        from risk.slippage import apply_slippage
+
+        position = self.portfolio.positions.get(ticker)
+        if position is None:
+            return False
+        _, bps = apply_slippage(
+            price, "BUY" if position.side == "SHORT" else "SELL", cfg=self._slippage_cfg,
+        ) if self._enable_slippage else (price, 0.)
+        try:
+            assessment, trade = self.portfolio.protect_profit(
+                ticker, price, observed_at=requested_at, config=self._profit_config,
+                exit_slippage_bps=bps, expected_revision=revision,
+            )
+            if assessment is None:
+                return False
+            with self._lock:
+                self._protection_status[ticker] = {
+                    "status": "CLOSED" if trade else "ARMED" if assessment.armed else "WAITING",
+                    "best_price": assessment.best_price,
+                    "stop_price": assessment.stop_price,
+                    "estimated_net_pct": assessment.estimated_net_pct,
+                    "peak_net_pct": assessment.peak_net_pct,
+                    "quote_at": requested_at,
+                }
+            if trade:
+                self._emit(PulseStage.EXECUTE,
+                           f"Profit protection {trade.action} {ticker} @ ${trade.price:,.4f}; "
+                           f"net P&L ${trade.realized_pnl:+,.2f}", level="TRADE",
+                           meta={"profit_protection": True, "trade": trade.to_dict()})
+            elif assessment.stop_price != position.profit_stop_price:
+                self._emit(PulseStage.RISK,
+                           f"Profit protection {ticker}: best ${assessment.best_price:,.4f}, "
+                           f"exit trigger ${assessment.stop_price:,.4f}", level="INFO")
+            return trade is not None
+        finally:
+            # Peak/trigger changes must survive a crash during a slow model call.
+            self._checkpoint()
+
+    def _protection_once(self):
+        from market_data.protection_quotes import latest_protection_quote
+
+        provider = self._protection_quote_provider or latest_protection_quote
+        for ticker in list(self.portfolio.positions):
+            if self._stop_flag.is_set():
+                break
+            revision = len(self.portfolio.trade_log)
+            try:
+                quote = provider(ticker).validate()
+                if self._stop_flag.is_set():
+                    break
+                self._protect_quote(ticker, quote.price, quote.requested_at, revision)
+            except Exception as exc:
+                with self._lock:
+                    self._protection_status[ticker] = {
+                        "status": "UNAVAILABLE", "reason": str(exc),
+                    }
+                self._emit(PulseStage.RISK,
+                           f"Profit protection {ticker}: {exc}", level="WARN")
+
+    def _protection_loop(self):
+        """Poll every open symbol independently of model latency/decision bars."""
+        while not self._stop_flag.is_set():
+            try:
+                self._protection_once()
+            except Exception as exc:
+                self._emit(PulseStage.ERROR, f"Profit monitor error: {exc}", level="WARN")
+            self._stop_flag.wait(self._protection_poll_seconds)
+        self._checkpoint()
+
+    def profit_protection_status(self):
+        with self._lock:
+            return {ticker: dict(state) for ticker, state in self._protection_status.items()}
+
     def set_persist_callback(self, cb) -> None:
         """Install the function that writes the portfolio to durable storage.
 
@@ -1033,6 +1126,7 @@ class LiveTradingEngine:
             daily_limit      = self._daily_loss_limit_pct
             self._cycle_count += 1
             self._last_cycle_started = datetime.now()
+        decision_revision = len(self.portfolio.trade_log)
 
         # SL / TP come from the profile envelope so they track the risk setting
         from config.user_profile import RISK_ENVELOPES
@@ -1071,6 +1165,7 @@ class LiveTradingEngine:
         # the first cycle per ticker pays the yfinance.info latency.
         self._emit(PulseStage.FETCH,
                    f"Fetching 5-minute candles for {ticker}…", level="INFO")
+        quote_requested_at = time.time()
         snap = None
         used_interval = "5m"
         last_exc: Optional[Exception] = None
@@ -1162,6 +1257,16 @@ class LiveTradingEngine:
             self._stop_flag.set()
             return
 
+        if used_interval == "5m" and not (
+            self._protection_thread is not None and self._protection_thread.is_alive()
+        ):
+            import pandas as pd
+            stamp = pd.Timestamp(snap.data.index[-1])
+            stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+            if -5 <= time.time() - stamp.timestamp() <= 390:
+                if self._protect_quote(ticker, price, quote_requested_at, decision_revision):
+                    return
+
         pos = self.portfolio.positions.get(ticker)
         if pos is not None:
             pnl_pct = pos.unrealized_pnl_pct
@@ -1175,16 +1280,23 @@ class LiveTradingEngine:
                            f"-{stop_loss_pct:.1f}%) — force closing",
                            level="WARN")
                 try:
+                    close_side = "BUY" if pos.side == "SHORT" else "SELL"
                     if self._enable_slippage:
                         from risk import apply_slippage
                         sl_px, _ = apply_slippage(
-                            price, "SELL", cfg=self._slippage_cfg)
+                            price, close_side, cfg=self._slippage_cfg)
                     else:
                         sl_px = price
-                    tr = self.portfolio.sell(
-                        ticker, sl_px, action_label="SELL",
-                        reasoning=f"Auto stop-loss at {pnl_pct:+.2f}%",
-                    )
+                    if pos.side == "SHORT":
+                        tr = self.portfolio.cover(
+                            ticker, sl_px,
+                            reasoning=f"Auto short stop-loss at {pnl_pct:+.2f}%",
+                        )
+                    else:
+                        tr = self.portfolio.sell(
+                            ticker, sl_px, action_label="SELL",
+                            reasoning=f"Auto stop-loss at {pnl_pct:+.2f}%",
+                        )
                     self._emit(PulseStage.EXECUTE,
                                f"🔴 SELL {ticker} @ ${price:,.2f} "
                                f"P&L ${tr.realized_pnl:+,.2f}",
@@ -1201,16 +1313,23 @@ class LiveTradingEngine:
                            f"{take_profit_pct:.1f}%) — locking in gains",
                            level="WARN")
                 try:
+                    close_side = "BUY" if pos.side == "SHORT" else "SELL"
                     if self._enable_slippage:
                         from risk import apply_slippage
                         tp_px, _ = apply_slippage(
-                            price, "SELL", cfg=self._slippage_cfg)
+                            price, close_side, cfg=self._slippage_cfg)
                     else:
                         tp_px = price
-                    tr = self.portfolio.sell(
-                        ticker, tp_px, action_label="SELL",
-                        reasoning=f"Auto take-profit at {pnl_pct:+.2f}%",
-                    )
+                    if pos.side == "SHORT":
+                        tr = self.portfolio.cover(
+                            ticker, tp_px,
+                            reasoning=f"Auto short take-profit at {pnl_pct:+.2f}%",
+                        )
+                    else:
+                        tr = self.portfolio.sell(
+                            ticker, tp_px, action_label="SELL",
+                            reasoning=f"Auto take-profit at {pnl_pct:+.2f}%",
+                        )
                     self._emit(PulseStage.EXECUTE,
                                f"🟢 SELL {ticker} @ ${price:,.2f} "
                                f"P&L ${tr.realized_pnl:+,.2f}",
@@ -1356,6 +1475,39 @@ class LiveTradingEngine:
 
         if strategy_mode == "COMMITTEE":
             decision = verdict.to_trading_decision(ticker)
+            required_score = report["metrics"].get(
+                "required_committee_score",
+            )
+            setup_confidence = report["metrics"].get("signal_confidence")
+            setup_side = report.get("signal_side", "LONG")
+            score_passed = (
+                verdict.score <= required_score
+                if setup_side == "SHORT"
+                else verdict.score >= required_score
+            ) if required_score is not None else False
+            setup_led_entry = (
+                ticker not in self.portfolio.positions
+                and report.get("entry_allowed")
+                and score_passed
+            )
+            setup_action = "SELL" if setup_side == "SHORT" else "BUY"
+            if setup_led_entry and decision.action != setup_action:
+                decision = decision.model_copy(update={
+                    "action": setup_action,
+                    "confidence_score": setup_confidence or 0.60,
+                    "attractiveness_label": (
+                        "UNATTRACTIVE"
+                        if setup_side == "SHORT"
+                        else "ATTRACTIVE"
+                    ),
+                    "reasoning": (
+                        f"Regime-aware {setup_side} {report['setup']} "
+                        f"entry passed at "
+                        f"committee score {verdict.score:+.2f} (required "
+                        f"{required_score:+.2f}). "
+                        + decision.reasoning
+                    ),
+                })
 
             with self._lock:
                 self._last_decision = decision
@@ -1543,27 +1695,109 @@ class LiveTradingEngine:
             superseded = (self._stop_flag.is_set() or ticker != self._ticker
                           or risk_profile != self._risk_profile
                           or trade_size_pct != self._trade_size_pct
-                          or strategy_mode != self._strategy_mode)
+                          or strategy_mode != self._strategy_mode
+                          or len(self.portfolio.trade_log) != decision_revision)
         if superseded:
-            self._emit(PulseStage.RISK, "Decision discarded: engine stopped or configuration changed during analysis",
+            self._emit(PulseStage.RISK, "Decision discarded: engine, configuration or portfolio changed during analysis",
                        level="WARN")
             return
-        # A valid closed-bar setup is not permission to chase a later price gap.
-        from strategy.briefing import execution_entry_check
-        execution_ok, execution_reason = execution_entry_check(report, price)
-        report["checks"].append({"name": "Execution price", "passed": execution_ok,
-                                  "detail": execution_reason})
-        if not execution_ok:
-            report["entry_allowed"] = False
-            report["explanation"] = execution_reason
+        # Soft exits are position-aware. A five-minute indicator flip must
+        # travel far enough to justify another fee, while every position is
+        # still closed inside the profile's maximum intraday holding window.
+        position_for_exit = self.portfolio.positions.get(ticker)
+        is_cover = False
+        if position_for_exit is not None:
+            from strategy.trade_management import assess_intraday_exit
+            is_short = position_for_exit.side == "SHORT"
+            exit_setup = report.get(
+                "short_exit_setup" if is_short else "exit_setup", "NONE",
+            )
+            research_exit = bool(report.get(
+                "short_exit_recommended"
+                if is_short else "exit_recommended",
+            ))
+            model_exit = (
+                (is_short and decision.action == "BUY")
+                or (not is_short and decision.action == "SELL")
+            )
+            exit_assessment = assess_intraday_exit(
+                risk_profile=risk_profile,
+                opened_at=position_for_exit.opened_at,
+                now=datetime.utcnow(),
+                pnl_pct=position_for_exit.unrealized_pnl_pct,
+                signal_exit=research_exit,
+            )
+            if model_exit or exit_assessment.should_exit:
+                exit_action = "BUY" if is_short else "SELL"
+                exit_reason = (
+                    "Directional model/committee exit"
+                    if model_exit else exit_assessment.reason
+                )
+                decision = decision.model_copy(update={
+                    "action": exit_action,
+                    "attractiveness_label": "NEUTRAL",
+                    "reasoning": (
+                        f"{exit_reason}; completed-candle setup "
+                        f"{exit_setup}. " + decision.reasoning
+                    ),
+                })
+                is_cover = is_short
+                self._emit(
+                    PulseStage.RISK,
+                    exit_reason,
+                    level="WARN",
+                )
+
+        # Validate both entry directions; closing an existing position is exempt.
+        entry_side = None
+        if decision.action == "BUY" and not is_cover:
+            entry_side = "LONG"
+        elif decision.action == "SELL" and position_for_exit is None:
+            entry_side = "SHORT"
+        if entry_side is not None:
+            from strategy.briefing import execution_entry_check
+            execution_ok, execution_reason = execution_entry_check(
+                report, price, side=entry_side,
+            )
+            report["checks"].append({
+                "name": "Execution price",
+                "passed": execution_ok,
+                "detail": execution_reason,
+            })
+            if not execution_ok:
+                report["entry_allowed"] = False
+                report["explanation"] = execution_reason
 
         # Apply an identical deterministic entry gate to every decision mode.
         # SELL/risk exits are never blocked by an entry-only trend filter.
         report["raw_action"] = decision.action
-        if decision.action == "BUY" and not report["entry_allowed"]:
+        if (
+            decision.action == "BUY"
+            and not is_cover
+            and not report["entry_allowed"]
+        ):
             decision = decision.model_copy(update={
                 "action": "HOLD", "attractiveness_label": "NEUTRAL",
                 "reasoning": f"BUY blocked by entry research: {report['explanation']}. " + decision.reasoning,
+            })
+            self._emit(PulseStage.RISK, decision.reasoning[:500], level="WARN")
+        short_entry = (
+            decision.action == "SELL"
+            and ticker not in self.portfolio.positions
+            and report.get("signal_side") == "SHORT"
+        )
+        if (
+            decision.action == "SELL"
+            and ticker not in self.portfolio.positions
+            and (not short_entry or not report["entry_allowed"])
+        ):
+            decision = decision.model_copy(update={
+                "action": "HOLD",
+                "attractiveness_label": "NEUTRAL",
+                "reasoning": (
+                    "SELL cannot open a short without a confirmed short "
+                    "setup. " + decision.reasoning
+                ),
             })
             self._emit(PulseStage.RISK, decision.reasoning[:500], level="WARN")
         decision = decision.model_copy(update={"reasoning":
@@ -1598,6 +1832,31 @@ class LiveTradingEngine:
             return eff
 
         if decision.action == "BUY":
+            open_position = self.portfolio.positions.get(ticker)
+            if open_position is not None and open_position.side == "SHORT":
+                cover_px = _fill_price("BUY")
+                try:
+                    tr = self.portfolio.cover(
+                        ticker,
+                        cover_px,
+                        reasoning=decision.reasoning[:2000],
+                        expected_revision=decision_revision,
+                    )
+                    emoji = "🟢" if tr.realized_pnl >= 0 else "🔴"
+                    self._emit(
+                        PulseStage.EXECUTE,
+                        f"{emoji} COVER {ticker} @ ${cover_px:,.2f} "
+                        f"P&L ${tr.realized_pnl:+,.2f}",
+                        level="TRADE",
+                    )
+                except Exception as exc:
+                    self._emit(
+                        PulseStage.ERROR,
+                        f"COVER failed: {exc}",
+                        level="ERROR",
+                    )
+                return
+
             # Safety gate — circuit breakers / cooldown / daily cap
             sstat = self.get_safety_status()
             if sstat.is_blocked:
@@ -1656,6 +1915,7 @@ class LiveTradingEngine:
                 self.portfolio.buy(
                     ticker, buy_px, cash_amount=cash_to_use,
                     reasoning=decision.reasoning[:2000],
+                        expected_revision=decision_revision,
                 )
                 pyramid_tag = " (pyramid)" if already_held else ""
                 slip_tag = (f" [slip {(buy_px-price)/price*1e4:+.1f}bps]"
@@ -1668,16 +1928,90 @@ class LiveTradingEngine:
                 self._emit(PulseStage.ERROR,
                            f"BUY failed: {exc}", level="ERROR")
         elif decision.action == "SELL":
-            if ticker not in self.portfolio.positions:
+            open_position = self.portfolio.positions.get(ticker)
+            if open_position is None and short_entry:
+                from config.user_profile import RISK_ENVELOPES
+                env = RISK_ENVELOPES.get(
+                    risk_profile, RISK_ENVELOPES["Balanced"],
+                )
+                if (
+                    not math.isfinite(decision.confidence_score)
+                    or not env.conf_threshold
+                    <= decision.confidence_score
+                    <= 1
+                ):
+                    self._emit(
+                        PulseStage.EXECUTE,
+                        f"SHORT gated — confidence "
+                        f"{decision.confidence_score:.0%} < threshold "
+                        f"{env.conf_threshold:.0%} ({risk_profile})",
+                        level="INFO",
+                    )
+                    return
+                sstat = self.get_safety_status()
+                if sstat.is_blocked:
+                    self._emit(
+                        PulseStage.RISK,
+                        f"🛡 SHORT blocked by safety: {sstat.reason}",
+                        level="WARN",
+                    )
+                    return
+                from risk.sizing import allocate_buy
+                allocation = allocate_buy(
+                    equity=self.portfolio.get_total_value(),
+                    cash=self.portfolio.cash,
+                    existing_value=0.0,
+                    user_cap_pct=trade_size_pct,
+                    profile_cap_pct=env.size_max_pct,
+                    suggested_pct=decision.suggested_position_size_pct,
+                    fee_rate=self.portfolio.fee_rate,
+                )
+                if allocation.cash_amount <= 0:
+                    self._emit(
+                        PulseStage.RISK,
+                        f"SHORT blocked — {allocation.reason}",
+                        level="WARN",
+                    )
+                    return
+                short_px = _fill_price("SELL")
+                try:
+                    self.portfolio.open_short(
+                        ticker,
+                        short_px,
+                        cash_amount=allocation.cash_amount,
+                        reasoning=decision.reasoning[:2000],
+                        expected_revision=decision_revision,
+                    )
+                    self._emit(
+                        PulseStage.EXECUTE,
+                        f"🔻 SHORT {ticker} @ ${short_px:,.2f} "
+                        f"({allocation.equity_pct:.0f}% · "
+                        f"${allocation.cash_amount:,.0f})",
+                        level="TRADE",
+                    )
+                except Exception as exc:
+                    self._emit(
+                        PulseStage.ERROR,
+                        f"SHORT failed: {exc}",
+                        level="ERROR",
+                    )
+            elif open_position is None:
                 self._emit(PulseStage.EXECUTE,
                            f"SELL skipped — no open {ticker} position",
                            level="INFO")
+            elif open_position.side == "SHORT":
+                self._emit(
+                    PulseStage.EXECUTE,
+                    f"SHORT maintained — already short {ticker}",
+                    level="INFO",
+                )
             else:
                 sell_px = _fill_price("SELL")
                 try:
                     tr = self.portfolio.sell(
                         ticker, sell_px,
                         reasoning=decision.reasoning[:2000],
+                        expected_revision=decision_revision,
                     )
                     emoji = "🟢" if tr.realized_pnl >= 0 else "🔴"
                     slip_tag = (f" [slip {(sell_px-price)/price*1e4:+.1f}bps]"

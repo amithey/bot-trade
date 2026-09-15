@@ -54,7 +54,7 @@ from __future__ import annotations
 import json
 import math
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -72,7 +72,7 @@ logger = get_logger(__name__)
 @dataclass
 class Position:
     """
-    A single open long position.
+    A single open long or collateralised paper short position.
 
     Attributes
     ----------
@@ -88,12 +88,22 @@ class Position:
     avg_entry_price: float
     current_price: float
     opened_at: datetime = field(default_factory=datetime.utcnow)
+    side: str = "LONG"
+    entry_fees: float = 0.0  # unallocated entry commissions for remaining units
+    best_price: float | None = None
+    profit_stop_price: float | None = None
+    profit_protection_armed: bool = False
+    profit_exit_pending: bool = False
+    profit_quote_at: float = 0.0
+    profit_peak_net_pct: float | None = None
 
     # ── Derived metrics ───────────────────────────────────────────────────────
 
     @property
     def market_value(self) -> float:
         """Current mark-to-market value of the entire position."""
+        if self.side == "SHORT":
+            return self.cost_basis + self.unrealized_pnl
         return self.quantity * self.current_price
 
     @property
@@ -104,7 +114,12 @@ class Position:
     @property
     def unrealized_pnl(self) -> float:
         """Absolute unrealised gain / loss in USD."""
-        return self.market_value - self.cost_basis
+        direction = -1 if self.side == "SHORT" else 1
+        return (
+            (self.current_price - self.avg_entry_price)
+            * self.quantity
+            * direction
+        )
 
     @property
     def unrealized_pnl_pct(self) -> float:
@@ -133,14 +148,14 @@ class TradeRecord:
     Attributes
     ----------
     executed_at:     UTC datetime of execution.
-    action:          ``"BUY"``, ``"SELL"``, or ``"FORCE_CLOSE"``.
+    action:          BUY, SHORT, SELL, COVER, or FORCE_CLOSE.
     ticker:          Asset symbol.
     quantity:        Shares transacted.
     price:           Execution price per share.
     gross_value:     ``quantity × price`` before fees.
     fee:             Commission charged (USD).
     net_value:       ``gross_value ± fee`` (positive for BUY cost, negative for SELL proceeds).
-    realized_pnl:    Profit / loss realised on this trade (0.0 for BUY).
+    realized_pnl:    Exit P&L after allocated entry and exit fees (0.0 on entry).
     cash_after:      Cash balance immediately after execution.
     portfolio_value: Total portfolio value (cash + open positions) after execution.
     reasoning:       AI reasoning snippet that triggered this order.
@@ -237,7 +252,7 @@ class LivePortfolio:
         self._daily_snapshots: list[DailySnapshot] = []
         self._realized_pnl: float = 0.0
 
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
         # Record the opening-day snapshot
         self._record_daily_snapshot_if_new()
@@ -279,9 +294,12 @@ class LivePortfolio:
             return self._cash + sum(p.market_value for p in self._positions.values())
 
     def get_unrealized_pnl(self) -> float:
-        """Sum of unrealised P&L across all open positions (USD)."""
+        """Open P&L after paid entry fees, before hypothetical exit fees.
+
+        Position-level price P&L stays gross for marks and protective stops.
+        """
         with self._lock:
-            return sum(p.unrealized_pnl for p in self._positions.values())
+            return sum(p.unrealized_pnl - p.entry_fees for p in self._positions.values())
 
     def get_realized_pnl(self) -> float:
         """Cumulative realised profit / loss on all closed trades (USD)."""
@@ -341,6 +359,7 @@ class LivePortfolio:
         quantity: Optional[float] = None,
         cash_amount: Optional[float] = None,
         reasoning: str = "",
+        expected_revision: int | None = None,
     ) -> TradeRecord:
         """
         Execute a BUY order.
@@ -379,6 +398,7 @@ class LivePortfolio:
                 raise ValueError(f"{label} must be finite and positive.")
 
         with self._lock:
+            self._check_revision(expected_revision)
             self._record_daily_snapshot_if_new()
 
             available_cash = self._cash
@@ -410,6 +430,13 @@ class LivePortfolio:
             # Update or create position (weighted-average cost basis)
             if ticker in self._positions:
                 existing = self._positions[ticker]
+                if existing.profit_protection_armed:
+                    raise ValueError("Cannot add to a position with armed profit protection")
+                if existing.side == "SHORT":
+                    raise ValueError(
+                        f"Cannot BUY more {ticker} while a SHORT is open; "
+                        "cover it first."
+                    )
                 new_qty = existing.quantity + qty
                 new_avg = (
                     (existing.avg_entry_price * existing.quantity + price * qty)
@@ -421,6 +448,8 @@ class LivePortfolio:
                     avg_entry_price=new_avg,
                     current_price=price,
                     opened_at=existing.opened_at,
+                    side=existing.side,
+                    entry_fees=existing.entry_fees + fee,
                 )
             else:
                 self._positions[ticker] = Position(
@@ -428,6 +457,7 @@ class LivePortfolio:
                     quantity=qty,
                     avg_entry_price=price,
                     current_price=price,
+                    entry_fees=fee,
                 )
 
             self._cash -= total_cost
@@ -470,6 +500,7 @@ class LivePortfolio:
         quantity: Optional[float] = None,
         action_label: str = "SELL",
         reasoning: str = "",
+        expected_revision: int | None = None,
     ) -> TradeRecord:
         """
         Execute a SELL order.
@@ -497,6 +528,7 @@ class LivePortfolio:
             raise ValueError(f"Execution price must be > 0, got {price}.")
 
         with self._lock:
+            self._check_revision(expected_revision)
             if ticker not in self._positions:
                 raise ValueError(
                     f"Cannot SELL {ticker}: no open position exists."
@@ -505,6 +537,11 @@ class LivePortfolio:
             self._record_daily_snapshot_if_new()
 
             position = self._positions[ticker]
+            if position.side != "LONG":
+                raise ValueError(
+                    f"Cannot SELL {ticker}: the open position is SHORT; "
+                    "use cover()."
+                )
             qty = float(quantity) if quantity is not None else position.quantity
 
             if not math.isfinite(qty) or qty <= 0:
@@ -520,7 +557,8 @@ class LivePortfolio:
             net_proceeds = gross_proceeds - fee
 
             # Realised P&L = (sell_price - avg_cost) × qty − fees
-            realised = (price - position.avg_entry_price) * qty - fee
+            entry_fee = position.entry_fees * min(qty / position.quantity, 1.0)
+            realised = (price - position.avg_entry_price) * qty - fee - entry_fee
             self._realized_pnl += realised
 
             self._cash += net_proceeds
@@ -530,12 +568,9 @@ class LivePortfolio:
             if remaining_qty < 1e-9:
                 del self._positions[ticker]
             else:
-                self._positions[ticker] = Position(
-                    ticker=ticker,
-                    quantity=remaining_qty,
-                    avg_entry_price=position.avg_entry_price,
-                    current_price=price,
-                    opened_at=position.opened_at,
+                self._positions[ticker] = replace(
+                    position, quantity=remaining_qty, current_price=price,
+                    entry_fees=position.entry_fees - entry_fee,
                 )
 
             portfolio_val = self._cash + sum(
@@ -570,8 +605,152 @@ class LivePortfolio:
         )
         return record
 
+    def open_short(
+        self,
+        ticker: str,
+        price: float,
+        *,
+        cash_amount: float,
+        reasoning: str = "",
+        expected_revision: int | None = None,
+    ) -> TradeRecord:
+        """Open a collateralised paper SHORT position.
+
+        cash_amount is reserved as collateral. Sale proceeds are not
+        credited as reusable cash, preventing artificial leverage.
+        """
+        ticker = ticker.strip().upper()
+        if not ticker:
+            raise ValueError("Ticker must not be empty.")
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("Execution price must be finite and positive.")
+        if not math.isfinite(cash_amount) or cash_amount <= 0:
+            raise ValueError("Short collateral must be finite and positive.")
+        with self._lock:
+            self._check_revision(expected_revision)
+            self._record_daily_snapshot_if_new()
+            if ticker in self._positions:
+                raise ValueError(f"Cannot SHORT {ticker}: a position is open.")
+            collateral = min(float(cash_amount), self._cash)
+            fee = collateral * self.fee_rate
+            if collateral + fee > self._cash:
+                collateral = self._cash / (1 + self.fee_rate)
+                fee = collateral * self.fee_rate
+            if collateral <= 0:
+                raise ValueError(f"Insufficient cash to SHORT {ticker}.")
+            quantity = collateral / price
+            self._cash -= collateral + fee
+            self._positions[ticker] = Position(
+                ticker=ticker,
+                quantity=quantity,
+                avg_entry_price=price,
+                current_price=price,
+                side="SHORT",
+                entry_fees=fee,
+            )
+            portfolio_val = self._cash + sum(
+                p.market_value for p in self._positions.values()
+            )
+            record = TradeRecord(
+                executed_at=datetime.utcnow(),
+                action="SHORT",
+                ticker=ticker,
+                quantity=quantity,
+                price=price,
+                gross_value=collateral,
+                fee=fee,
+                net_value=collateral + fee,
+                realized_pnl=0.0,
+                cash_after=self._cash,
+                portfolio_value=portfolio_val,
+                reasoning=reasoning[:300],
+            )
+            self._trade_log.append(record)
+        log_trade_execution(
+            logger,
+            action="SHORT",
+            ticker=ticker,
+            price=price,
+            quantity=quantity,
+            cash_after=self._cash,
+            portfolio_value=portfolio_val,
+            reasoning_snippet=reasoning,
+        )
+        return record
+
+    def cover(
+        self,
+        ticker: str,
+        price: float,
+        *,
+        reasoning: str = "",
+        expected_revision: int | None = None,
+        action_label: str = "COVER",
+    ) -> TradeRecord:
+        """Close an entire paper SHORT position and release its collateral."""
+        ticker = ticker.strip().upper()
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("Execution price must be finite and positive.")
+        with self._lock:
+            self._check_revision(expected_revision)
+            if ticker not in self._positions:
+                raise ValueError(f"Cannot COVER {ticker}: no position exists.")
+            self._record_daily_snapshot_if_new()
+            position = self._positions[ticker]
+            if position.side != "SHORT":
+                raise ValueError(
+                    f"Cannot COVER {ticker}: the open position is LONG."
+                )
+            gross_collateral = position.cost_basis
+            gross_pnl = (
+                position.avg_entry_price - price
+            ) * position.quantity
+            fee = position.quantity * price * self.fee_rate
+            released = gross_collateral + gross_pnl - fee
+            realised = gross_pnl - fee - position.entry_fees
+            self._realized_pnl += realised
+            self._cash += released
+            del self._positions[ticker]
+            portfolio_val = self._cash + sum(
+                p.market_value for p in self._positions.values()
+            )
+            record = TradeRecord(
+                executed_at=datetime.utcnow(),
+                action=action_label,
+                ticker=ticker,
+                quantity=position.quantity,
+                price=price,
+                gross_value=position.quantity * price,
+                fee=fee,
+                net_value=released,
+                realized_pnl=realised,
+                cash_after=self._cash,
+                portfolio_value=portfolio_val,
+                reasoning=reasoning[:300],
+            )
+            self._trade_log.append(record)
+        log_trade_execution(
+            logger,
+            action=action_label,
+            ticker=ticker,
+            price=price,
+            quantity=position.quantity,
+            cash_after=self._cash,
+            portfolio_value=portfolio_val,
+            reasoning_snippet=reasoning,
+        )
+        return record
+
     def force_close(self, ticker: str, price: float, reasoning: str = "") -> TradeRecord:
         """Liquidate an open position unconditionally (e.g. end-of-day)."""
+        position = self.positions.get(ticker.strip().upper())
+        if position is not None and position.side == "SHORT":
+            return self.cover(
+                ticker=ticker,
+                price=price,
+                action_label="FORCE_CLOSE",
+                reasoning=reasoning,
+            )
         return self.sell(
             ticker=ticker,
             price=price,
@@ -596,13 +775,7 @@ class LivePortfolio:
         with self._lock:
             if ticker in self._positions:
                 pos = self._positions[ticker]
-                self._positions[ticker] = Position(
-                    ticker=pos.ticker,
-                    quantity=pos.quantity,
-                    avg_entry_price=pos.avg_entry_price,
-                    current_price=price,
-                    opened_at=pos.opened_at,
-                )
+                self._positions[ticker] = replace(pos, current_price=price)
 
     def update_prices(self, prices: dict[str, float]) -> None:
         """
@@ -616,6 +789,58 @@ class LivePortfolio:
         """
         for ticker, price in prices.items():
             self.update_price(ticker, price)
+
+    def _check_revision(self, expected_revision):
+        if expected_revision is not None and len(self._trade_log) != expected_revision:
+            raise ValueError("Portfolio changed while the decision or quote was pending")
+
+    def protect_profit(self, ticker, price, *, observed_at, config=None,
+                       exit_slippage_bps=0., expected_revision=None):
+        """Atomically mark, ratchet and close. No network or model calls.
+
+        The trigger price is never used as a fill: gaps execute at the latest
+        observed price with adverse slippage. Older in-flight quotes are ignored.
+        """
+        from risk.profit_protection import assess_profit_protection
+
+        ticker = ticker.strip().upper()
+        if not math.isfinite(observed_at) or observed_at <= 0:
+            raise ValueError("Invalid protection quote timestamp")
+        with self._lock:
+            if expected_revision is not None and len(self._trade_log) != expected_revision:
+                return None, None
+            pos = self._positions.get(ticker)
+            if pos is None or observed_at < pos.profit_quote_at:
+                return None, None
+            assessment = assess_profit_protection(
+                side=pos.side, entry_price=pos.avg_entry_price,
+                quantity=pos.quantity, entry_fees=pos.entry_fees,
+                price=price, best_price=pos.best_price,
+                stop_price=pos.profit_stop_price,
+                armed=pos.profit_protection_armed, exit_pending=pos.profit_exit_pending,
+                fee_rate=self.fee_rate, exit_slippage_bps=exit_slippage_bps,
+                config=config,
+            )
+            self._positions[ticker] = replace(
+                pos, current_price=price, best_price=assessment.best_price,
+                profit_stop_price=assessment.stop_price,
+                profit_protection_armed=assessment.armed,
+                profit_exit_pending=assessment.should_exit,
+                profit_quote_at=observed_at, profit_peak_net_pct=assessment.peak_net_pct,
+            )
+            record = None
+            if assessment.should_exit:
+                reason = (
+                    f"Profit protection {pos.side}: best={assessment.best_price:.8f}; "
+                    f"stop={assessment.stop_price:.8f}; quote={price:.8f}; "
+                    f"estimated net={assessment.estimated_net_pct:+.4f}%; "
+                    "exit independent of AI"
+                )
+                if pos.side == "SHORT":
+                    record = self.cover(ticker, assessment.estimated_fill, reasoning=reason)
+                else:
+                    record = self.sell(ticker, assessment.estimated_fill, reasoning=reason)
+            return assessment, record
 
     # ─────────────────────────────────────────────────────────────────────────
     # Summary / reporting
@@ -654,6 +879,7 @@ class LivePortfolio:
             "open_positions": [
                 {
                     "ticker":              p.ticker,
+                    "side":                p.side,
                     "quantity":            round(p.quantity, 6),
                     "avg_entry_price":     round(p.avg_entry_price, 4),
                     "current_price":       round(p.current_price, 4),
@@ -735,7 +961,7 @@ class LivePortfolio:
 
         with self._lock:
             payload = {
-                "schema_version":   2,
+                "schema_version":   4,
                 "name":             self.name,
                 "initial_capital":  self.initial_capital,
                 "fee_rate":         self.fee_rate,
@@ -747,9 +973,9 @@ class LivePortfolio:
                 "saved_at":         datetime.utcnow().isoformat(),
             }
 
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
 
         logger.debug("Portfolio saved to '%s' (%d trades)", path, len(self._trade_log))
 
@@ -779,8 +1005,12 @@ class LivePortfolio:
         raw = json.loads(path.read_text(encoding="utf-8"))
 
         version = raw.get("schema_version", 1)
-        if version not in (1, 2):
+        if version not in (1, 2, 3, 4):
             raise ValueError(f"Unrecognised portfolio schema version: {version}")
+
+        if version < 3:
+            from portfolio.accounting import migrate_entry_fees
+            raw = migrate_entry_fees(raw)
 
         port = cls.__new__(cls)
         port.name             = raw["name"]
@@ -793,7 +1023,7 @@ class LivePortfolio:
         }
         port._trade_log       = [TradeRecord.from_dict(r) for r in raw.get("trade_log", [])]
         port._daily_snapshots = [DailySnapshot.from_dict(s) for s in raw.get("daily_snapshots", [])]
-        port._lock            = threading.Lock()
+        port._lock            = threading.RLock()
 
         logger.info(
             "Portfolio '%s' loaded from '%s' — %d trades, cash=$%.2f",

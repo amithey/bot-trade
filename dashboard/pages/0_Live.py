@@ -766,6 +766,8 @@ with tab_eq:
                    f"current drawdown from peak {dd:+.2f}%")
 
 with tab_pos:
+    from dashboard.profit_protection import render_profit_protection
+    render_profit_protection(port, engine)
     if summ["open_positions"]:
         rows = []
         for p in summ["open_positions"]:

@@ -182,6 +182,31 @@ tests/              pytest suite, run in CI on every push and PR
 
 ## Testing
 
+The paper engine includes an independent trailing-profit monitor. See
+[profit protection](docs/PROFIT_PROTECTION.md) for the initial thresholds,
+polling limitations and an isolated local simulation.
+
+### Net accounting and offline diagnosis
+
+Closed-trade P&L includes allocated entry commissions and exit commissions,
+including partial long sales and short covers. Account-level open P&L deducts
+paid entry fees; position price returns remain gross for protective stops.
+Portfolio schema 4 preserves remaining entry fees and trailing-profit state.
+Older complete journals are migrated in memory on load; incomplete histories are rejected. Keep a
+backup before upgrading: older application versions cannot load schema 4.
+The dashboard preserves an unloadable account file and stops rather than
+silently replacing the account with a fresh balance.
+
+Inspect a saved account without fetching prices or running the engine:
+
+```bash
+python -m tools.audit_portfolio path/to/portfolio.json
+```
+
+The JSON report separates gross price outcomes, commissions, net P&L and
+accounting discrepancies. Exit fills include partial sales; they must not be
+presented as independent round trips. See the [audit and development roadmap](docs/TRADING_AUDIT_2026-09-15.md).
+
 ### Dashboard and execution hardening
 
 - Shared colors, typography, responsive layout and reduced-motion styles live
@@ -211,7 +236,7 @@ python -m pytest -q tests/test_execution_safety.py tests/test_market_data.py tes
 pytest -q
 ```
 
-189 tests, no network calls, no real API key required — every test that
+No network calls or real API key required — every test that
 touches an Anthropic key uses a fake one. Runs automatically on every push
 and pull request via GitHub Actions (`.github/workflows/tests.yml`); a PR
 with failing tests cannot merge to `main`.

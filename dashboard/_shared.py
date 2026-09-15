@@ -316,16 +316,16 @@ def ensure_portfolio_in_session() -> None:
             st.session_state["portfolio"] = LivePortfolio.load(path)
             return
         except Exception as exc:                               # noqa: BLE001
-            # A corrupt or future-schema file must not lock the user out of
-            # their own dashboard. Keep it for forensics, start clean.
+            # Loading failure must never silently reset balances or history.
+            # This also protects incomplete journals rejected by migration.
             from utils.logger import get_logger
-            get_logger(__name__).warning(
-                "Could not load portfolio %s (%s) — starting a fresh one",
-                path, exc)
-            try:
-                path.rename(path.with_suffix(".json.corrupt"))
-            except OSError:
-                pass
+            get_logger(__name__).error("Could not load portfolio %s: %s", path, exc)
+            st.error(
+                "Saved portfolio could not be loaded. Trading is unavailable "
+                "until the account file is recovered. The saved file has been preserved."
+            )
+            st.stop()
+            return
 
     st.session_state["portfolio"] = LivePortfolio(
         initial_capital=float(
