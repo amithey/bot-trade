@@ -294,13 +294,9 @@ with trading_tab:
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        prev_cap = int(st.session_state["starting_capital"])
-        cap = st.number_input(
-            "Starting Capital ($)", min_value=1000, max_value=10_000_000,
-            value=prev_cap, step=1000,
-            help="The virtual account's initial balance.",
-        )
-        st.session_state["starting_capital"] = cap
+        from dashboard.funding import render_funding_controls
+        with st.expander("Manage funds", expanded=False):
+            render_funding_controls("settings_funding")
 
     with c2:
         prev_ts = int(st.session_state["trade_size_pct"])
@@ -319,7 +315,7 @@ with trading_tab:
         )
         st.session_state["risk_profile"] = risk
 
-    if (cap, ts, risk) != (prev_cap, prev_ts, prev_risk):
+    if (ts, risk) != (prev_ts, prev_risk):
         save_profile()
         st.success("Profile saved.")
 

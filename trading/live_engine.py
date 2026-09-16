@@ -133,7 +133,7 @@ class LiveTradingEngine:
         self._boardroom_llm = None           # LLM the boardroom was built on
         self._last_boardroom: Optional[dict] = None
         # Mark-to-market equity history — one point per cycle, ~24h at 30s
-        self._equity_history: deque[tuple[datetime, float]] = deque(maxlen=2880)
+        self._equity_history: deque[tuple[datetime, float, float]] = deque(maxlen=2880)
         self._last_price: float = 0.0
         self._last_snapshot_df = None
         self._cycle_count: int = 0
@@ -174,6 +174,10 @@ class LiveTradingEngine:
     # ── Public control ──────────────────────────────────────────────────────
 
     def start(self) -> None:
+        with self._lock:
+            self._start_locked()
+
+    def _start_locked(self) -> None:
         # If stop() was just requested, the old worker may still be unwinding.
         # Do not clear its shared stop flag by starting a second loop.
         if any(t is not None and t.is_alive()
@@ -585,7 +589,8 @@ class LiveTradingEngine:
                 "strategy_mode":   self._strategy_mode,
                 "last_committee":  self._last_committee,
                 "last_boardroom":  self._last_boardroom,
-                "equity_history":  list(self._equity_history),
+                "equity_history":  [(ts, value + self.portfolio.initial_capital - capital)
+                                    for ts, value, capital in self._equity_history],
                 "interval_sec":    self._interval_sec,
                 "risk_profile":    self._risk_profile,
                 "trade_size_pct":  self._trade_size_pct,
@@ -1081,7 +1086,7 @@ class LiveTradingEngine:
         for ticker in list(self.portfolio.positions):
             if self._stop_flag.is_set():
                 break
-            revision = len(self.portfolio.trade_log)
+            revision = self.portfolio.execution_revision
             try:
                 quote = provider(ticker).validate()
                 if self._stop_flag.is_set():
@@ -1126,7 +1131,7 @@ class LiveTradingEngine:
             daily_limit      = self._daily_loss_limit_pct
             self._cycle_count += 1
             self._last_cycle_started = datetime.now()
-        decision_revision = len(self.portfolio.trade_log)
+        decision_revision = self.portfolio.execution_revision
 
         # SL / TP come from the profile envelope so they track the risk setting
         from config.user_profile import RISK_ENVELOPES
@@ -1231,8 +1236,9 @@ class LiveTradingEngine:
         # ── Risk management on existing position ────────────────────────────
         self.portfolio.update_price(ticker, price)
         with self._lock:
+            marked_value, capital_base = self.portfolio.value_and_capital()
             self._equity_history.append(
-                (datetime.now(), float(self.portfolio.get_total_value()))
+                (datetime.now(), marked_value, capital_base)
             )
 
         # Re-check daily guards after mark-to-market refresh. The early guard
@@ -1696,7 +1702,7 @@ class LiveTradingEngine:
                           or risk_profile != self._risk_profile
                           or trade_size_pct != self._trade_size_pct
                           or strategy_mode != self._strategy_mode
-                          or len(self.portfolio.trade_log) != decision_revision)
+                          or self.portfolio.execution_revision != decision_revision)
         if superseded:
             self._emit(PulseStage.RISK, "Decision discarded: engine, configuration or portfolio changed during analysis",
                        level="WARN")

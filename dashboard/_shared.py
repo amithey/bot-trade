@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import sys
+import threading
 from pathlib import Path
 
 import streamlit as st
@@ -239,8 +240,12 @@ def save_profile() -> None:
     from dashboard._identity import account_id as _account_id
     account = _account_id()
     existing = _load_profile_for(account)
+    live = current_engine()
+    port = live.portfolio if live is not None else st.session_state.get("portfolio")
+    capital = port.initial_capital if port is not None else float(st.session_state.get("starting_capital", 10_000))
+    st.session_state["starting_capital"] = capital
     UserProfile(
-        capital=float(st.session_state.get("starting_capital", 10_000)),
+        capital=capital,
         trade_size_pct=int(st.session_state.get("trade_size_pct", 20)),
         risk_profile=st.session_state.get("risk_profile", "Balanced"),
         watchlist=list(st.session_state.get("watchlist") or DEFAULT_TICKERS),
@@ -298,13 +303,38 @@ def save_portfolio(portfolio=None, account: str | None = None) -> None:
     port.save(portfolio_path(account or _account_id()))
 
 
+@st.cache_resource
+def portfolio_store():
+    """One wallet per saved account, including sessions without a live engine."""
+    return {}, threading.RLock()
+
+
 def ensure_portfolio_in_session() -> None:
+    wallets, guard = portfolio_store()
+    key = str(portfolio_path(account_id()))
+    with guard:
+        engine = current_engine()
+        if engine is not None:
+            wallets[key] = engine.portfolio
+        if key in wallets:
+            st.session_state["portfolio"] = wallets[key]
+            return
+        _restore_portfolio_in_session()
+        if st.session_state.get("portfolio") is not None:
+            wallets[key] = st.session_state["portfolio"]
+
+
+def _restore_portfolio_in_session() -> None:
     """Put this account's portfolio in session state, restoring it from disk.
 
     Before this, the portfolio lived only in session state, so a refresh wiped
     every open position and the whole trade history while the background
     engine kept trading against a portfolio object nobody could see any more.
     """
+    engine = current_engine()
+    if engine is not None:
+        st.session_state["portfolio"] = engine.portfolio
+        return
     if st.session_state.get("portfolio") is not None:
         return
 

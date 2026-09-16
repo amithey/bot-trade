@@ -32,6 +32,9 @@ from dashboard.components import page_header
 page_header('Portfolio', 'Positions, realized returns and account risk in one workspace.', section='Trade / Account overview')
 
 port = st.session_state["portfolio"]
+with st.expander("Manage funds"):
+    from dashboard.funding import render_funding_controls
+    render_funding_controls("portfolio_funding")
 summ = port.get_summary()
 
 from dashboard.profit_protection import render_profit_protection
