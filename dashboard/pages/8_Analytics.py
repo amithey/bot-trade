@@ -38,6 +38,7 @@ from analytics import (
 )
 
 port = st.session_state["portfolio"]
+st.caption("Historical equity is rebased to current net capital. Deposits and withdrawals are excluded from trading returns; percentages use this capital base.")
 
 from dashboard.components import page_header
 page_header('Performance analytics', 'Explore returns, drawdowns, attribution and concentration.', section='Lab / Portfolio analysis')
@@ -89,8 +90,7 @@ def _crunch(
 ):
     """Cache key includes a portfolio fingerprint so the cache invalidates
     automatically when a new trade lands."""
-    trade_log = list(port.trade_log)
-    snaps = list(port._daily_snapshots)  # noqa: SLF001
+    trade_log, snaps = port.performance_history()
     pos = list(port.positions.values())
 
     metrics = compute_metrics(trade_log, snaps, initial_capital, current_value)

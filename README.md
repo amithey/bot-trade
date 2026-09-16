@@ -191,11 +191,14 @@ polling limitations and an isolated local simulation.
 Closed-trade P&L includes allocated entry commissions and exit commissions,
 including partial long sales and short covers. Account-level open P&L deducts
 paid entry fees; position price returns remain gross for protective stops.
-Portfolio schema 4 preserves remaining entry fees and trailing-profit state.
+Portfolio schema 5 preserves remaining entry fees, trailing-profit state and cash transfers.
 Older complete journals are migrated in memory on load; incomplete histories are rejected. Keep a
-backup before upgrading: older application versions cannot load schema 4.
+backup before upgrading: older application versions cannot load schema 5.
 The dashboard preserves an unloadable account file and stops rather than
 silently replacing the account with a fresh balance.
+
+Use **Manage funds** to deposit, withdraw, or archive and reset a paper account.
+See [funding behavior](docs/FUNDING.md) for accounting and persistence details.
 
 Inspect a saved account without fetching prices or running the engine:
 

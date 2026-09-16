@@ -192,11 +192,15 @@ class DailySnapshot:
 
     snapshot_date: date
     portfolio_value: float
+    capital_base: float | None = None
+    cash_flow: float = 0.
 
     def to_dict(self) -> dict:
         return {
             "snapshot_date": self.snapshot_date.isoformat(),
             "portfolio_value": self.portfolio_value,
+            "capital_base": self.capital_base,
+            "cash_flow": self.cash_flow,
         }
 
     @classmethod
@@ -204,6 +208,8 @@ class DailySnapshot:
         return cls(
             snapshot_date=date.fromisoformat(d["snapshot_date"]),
             portfolio_value=float(d["portfolio_value"]),
+            capital_base=float(d["capital_base"]) if d.get("capital_base") is not None else None,
+            cash_flow=float(d.get("cash_flow", 0.)),
         )
 
 
@@ -251,6 +257,7 @@ class LivePortfolio:
         self._trade_log: list[TradeRecord] = []
         self._daily_snapshots: list[DailySnapshot] = []
         self._realized_pnl: float = 0.0
+        self._capital_changes: list[dict] = []
 
         self._lock = threading.RLock()
 
@@ -288,6 +295,77 @@ class LivePortfolio:
     # Computed metrics
     # ─────────────────────────────────────────────────────────────────────────
 
+    @property
+    def execution_revision(self) -> int:
+        with self._lock:
+            return len(self._trade_log) + len(self._capital_changes)
+
+    @property
+    def capital_changes(self):
+        with self._lock:
+            return [dict(change) for change in self._capital_changes]
+
+    def set_capital(self, capital: float, *, persist=None) -> float:
+        """Adjust net funding, preserving positions, trades and trading P&L.
+
+        The delta is a deposit/withdrawal, not trading income. A persistence
+        failure rolls back under the same lock before any trade can observe it.
+        """
+        if not math.isfinite(capital) or capital <= 0:
+            raise ValueError("Capital must be a finite positive amount")
+        with self._lock:
+            delta = capital - self.initial_capital
+            if delta == 0:
+                return 0.
+            if self._cash + delta < 0:
+                raise ValueError("Cannot withdraw more than available cash; reduce the withdrawal or close positions first")
+            old_capital, old_cash = self.initial_capital, self._cash
+            old_snapshots = list(self._daily_snapshots)
+            self._record_daily_snapshot_if_new()
+            self.initial_capital = float(capital)
+            self._cash += delta
+            self._daily_snapshots = [
+                replace(s, cash_flow=s.cash_flow + delta)
+                if s.snapshot_date == date.today() else s
+                for s in self._daily_snapshots
+            ]
+            self._capital_changes.append({
+                "changed_at": datetime.utcnow().isoformat(), "amount": delta,
+                "capital_before": old_capital, "capital_after": capital,
+            })
+            try:
+                if persist is not None:
+                    persist(self)
+            except Exception:
+                self.initial_capital, self._cash = old_capital, old_cash
+                self._daily_snapshots = old_snapshots
+                self._capital_changes.pop()
+                raise
+            return delta
+
+    def transfer_cash(self, amount: float, *, persist=None) -> float:
+        """Signed cash transfer, serialized with other transfers and trades."""
+        if not math.isfinite(amount) or amount == 0:
+            raise ValueError("Transfer must be a finite, non-zero amount")
+        with self._lock:
+            return self.set_capital(self.initial_capital + amount, persist=persist)
+
+    def value_and_capital(self):
+        with self._lock:
+            return self.get_total_value(), self.initial_capital
+
+    def performance_history(self):
+        """Copies rebased to current funding; deposits cannot look like returns."""
+        with self._lock:
+            trades = [replace(t, portfolio_value=t.portfolio_value + sum(
+                c["amount"] for c in self._capital_changes
+                if datetime.fromisoformat(c["changed_at"]) > t.executed_at
+            )) for t in self._trade_log]
+            snapshots = [replace(s, portfolio_value=s.portfolio_value +
+                                self.initial_capital - (s.capital_base or self.initial_capital))
+                         for s in self._daily_snapshots]
+            return trades, snapshots
+
     def get_total_value(self) -> float:
         """Cash balance + sum of all open position market values."""
         with self._lock:
@@ -308,8 +386,9 @@ class LivePortfolio:
 
     def get_total_return_pct(self) -> float:
         """(current_value − initial_capital) / initial_capital × 100."""
-        total = self.get_total_value()
-        return (total - self.initial_capital) / self.initial_capital * 100.0
+        with self._lock:
+            total = self.get_total_value()
+            return (total - self.initial_capital) / self.initial_capital * 100.0
 
     def get_daily_pnl(self) -> float:
         """
@@ -318,16 +397,16 @@ class LivePortfolio:
 
         Returns ``0.0`` if no snapshot is available for today.
         """
-        today_value = self.get_total_value()
         today = date.today()
         with self._lock:
+            today_value = self.get_total_value()
             snaps_today = [
                 s for s in self._daily_snapshots
                 if s.snapshot_date == today
             ]
-        if not snaps_today:
-            return 0.0
-        return today_value - snaps_today[0].portfolio_value
+            if not snaps_today:
+                return 0.0
+            return today_value - snaps_today[0].portfolio_value - snaps_today[0].cash_flow
 
     def get_daily_pnl_pct(self) -> float:
         """
@@ -791,7 +870,7 @@ class LivePortfolio:
             self.update_price(ticker, price)
 
     def _check_revision(self, expected_revision):
-        if expected_revision is not None and len(self._trade_log) != expected_revision:
+        if expected_revision is not None and self.execution_revision != expected_revision:
             raise ValueError("Portfolio changed while the decision or quote was pending")
 
     def protect_profit(self, ticker, price, *, observed_at, config=None,
@@ -807,7 +886,7 @@ class LivePortfolio:
         if not math.isfinite(observed_at) or observed_at <= 0:
             raise ValueError("Invalid protection quote timestamp")
         with self._lock:
-            if expected_revision is not None and len(self._trade_log) != expected_revision:
+            if expected_revision is not None and self.execution_revision != expected_revision:
                 return None, None
             pos = self._positions.get(ticker)
             if pos is None or observed_at < pos.profit_quote_at:
@@ -961,12 +1040,13 @@ class LivePortfolio:
 
         with self._lock:
             payload = {
-                "schema_version":   4,
+                "schema_version":   5,
                 "name":             self.name,
                 "initial_capital":  self.initial_capital,
                 "fee_rate":         self.fee_rate,
                 "cash":             self._cash,
                 "realized_pnl":     self._realized_pnl,
+                "capital_changes":  self._capital_changes,
                 "positions":        {k: v.to_dict() for k, v in self._positions.items()},
                 "trade_log":        [r.to_dict() for r in self._trade_log],
                 "daily_snapshots":  [s.to_dict() for s in self._daily_snapshots],
@@ -1005,7 +1085,7 @@ class LivePortfolio:
         raw = json.loads(path.read_text(encoding="utf-8"))
 
         version = raw.get("schema_version", 1)
-        if version not in (1, 2, 3, 4):
+        if version not in (1, 2, 3, 4, 5):
             raise ValueError(f"Unrecognised portfolio schema version: {version}")
 
         if version < 3:
@@ -1018,11 +1098,14 @@ class LivePortfolio:
         port.fee_rate         = float(raw.get("fee_rate", 0.001))
         port._cash            = float(raw["cash"])
         port._realized_pnl    = float(raw.get("realized_pnl", 0.0))
+        port._capital_changes = list(raw.get("capital_changes", []))
         port._positions       = {
             k: Position.from_dict(v) for k, v in raw.get("positions", {}).items()
         }
         port._trade_log       = [TradeRecord.from_dict(r) for r in raw.get("trade_log", [])]
         port._daily_snapshots = [DailySnapshot.from_dict(s) for s in raw.get("daily_snapshots", [])]
+        port._daily_snapshots = [replace(s, capital_base=port.initial_capital)
+                                if s.capital_base is None else s for s in port._daily_snapshots]
         port._lock            = threading.RLock()
 
         logger.info(
@@ -1050,7 +1133,8 @@ class LivePortfolio:
         if not already_recorded:
             value = self._cash + sum(p.market_value for p in self._positions.values())
             self._daily_snapshots.append(
-                DailySnapshot(snapshot_date=today, portfolio_value=value)
+                DailySnapshot(snapshot_date=today, portfolio_value=value,
+                              capital_base=self.initial_capital)
             )
             logger.debug(
                 "Daily snapshot recorded: date=%s, value=$%.2f", today, value

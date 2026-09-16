@@ -208,13 +208,8 @@ with control_panel:
             st.session_state["strategy_mode"] = strategy_mode
 
         with c_cap:
-            prev_cap = int(st.session_state["starting_capital"])
-            cap = st.number_input("CAPITAL ($)", min_value=1000, max_value=10_000_000,
-                                  value=prev_cap, step=1000,
-                                  key="capital_widget")
-            if cap != prev_cap:
-                st.session_state["starting_capital"] = cap
-                save_profile()
+            st.metric("NET CAPITAL ($)", f"{port.initial_capital:,.2f}")
+            st.caption("Use Manage funds to deposit, withdraw or reset.")
 
         with c_size:
             prev_ts = int(st.session_state["trade_size_pct"])
@@ -286,6 +281,10 @@ with control_panel:
             f"Take profit {_active_envelope.take_profit_pct:g}% · "
             f"Minimum signal confidence {_active_envelope.conf_threshold:.0%}"
         )
+
+    with st.popover("Manage funds", width="stretch"):
+        from dashboard.funding import render_funding_controls
+        render_funding_controls("live_funding")
 
 with strategy_hint:
     st.caption(f"{ticker} · {risk}")
@@ -732,7 +731,7 @@ with tab_eq:
     else:
         eq_ts = [p[0] for p in eq_hist]
         eq_val = [p[1] for p in eq_hist]
-        start_cap = float(st.session_state["starting_capital"])
+        start_cap = port.initial_capital
         eq_fig = go.Figure()
         eq_fig.add_hline(y=start_cap, line_dash="dot",
                          line_color="#3a4a5c", line_width=1,

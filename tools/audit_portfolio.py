@@ -13,7 +13,7 @@ from portfolio.accounting import migrate_entry_fees
 
 def audit_portfolio(raw: dict) -> dict:
     version = raw.get("schema_version", 1)
-    if version not in (1, 2, 3, 4):
+    if version not in (1, 2, 3, 4, 5):
         raise ValueError(f"Unsupported portfolio schema: {version}")
     data = migrate_entry_fees(raw) if version < 3 else raw
     trades = data.get("trade_log", [])
