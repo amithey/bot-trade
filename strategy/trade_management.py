@@ -30,12 +30,13 @@ def assess_intraday_exit(
     now: datetime,
     pnl_pct: float,
     signal_exit: bool,
+    round_trip_cost_pct: float = 0.0,
 ) -> ExitAssessment:
     """Decide whether a soft exit is actionable.
 
     A maximum holding window keeps the strategy intraday. Before that limit,
     a completed-candle/model exit is accepted after the minimum observation
-    window when it either protects at least 0.25% gross profit or cuts a loss
+    window when it either protects at least 0.25% plus supplied costs or cuts a loss
     that has reached 0.45%. Hard portfolio stops are evaluated separately and
     are never delayed by this function.
     """
@@ -57,7 +58,9 @@ def assess_intraday_exit(
             f"Exit signal observed during {min_minutes}-minute confirmation window",
             age_minutes,
         )
-    if pnl_pct >= 0.25:
+    # Committee callers supply their execution-cost budget. Other strategies
+    # keep the original threshold through the default argument.
+    if pnl_pct >= 0.25 + round_trip_cost_pct:
         return ExitAssessment(
             True,
             f"Exit signal protects a {pnl_pct:+.2f}% gross gain",

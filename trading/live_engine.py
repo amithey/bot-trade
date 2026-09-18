@@ -80,6 +80,7 @@ class LiveTradingEngine:
         if not math.isfinite(protection_poll_seconds) or protection_poll_seconds <= 0:
             raise ValueError("Protection polling interval must be positive")
         self._profit_config = profit_protection_config or ProfitProtectionConfig()
+        self._profit_config_explicit = profit_protection_config is not None
         self._protection_quote_provider = protection_quote_provider
         self._protection_poll_seconds = protection_poll_seconds
         self._protection_thread = None
@@ -1050,8 +1051,14 @@ class LiveTradingEngine:
             price, "BUY" if position.side == "SHORT" else "SELL", cfg=self._slippage_cfg,
         ) if self._enable_slippage else (price, 0.)
         try:
+            profit_config = self._profit_config
+            if self._strategy_mode == "COMMITTEE" and not self._profit_config_explicit:
+                from strategy.committee_policy import committee_profit_config
+                from config.user_profile import RISK_ENVELOPES
+                envelope = RISK_ENVELOPES.get(self._risk_profile, RISK_ENVELOPES["Balanced"])
+                profit_config = committee_profit_config(profit_config, envelope.stop_loss_pct)
             assessment, trade = self.portfolio.protect_profit(
-                ticker, price, observed_at=requested_at, config=self._profit_config,
+                ticker, price, observed_at=requested_at, config=profit_config,
                 exit_slippage_bps=bps, expected_revision=revision,
             )
             if assessment is None:
@@ -1136,6 +1143,9 @@ class LiveTradingEngine:
         # SL / TP come from the profile envelope so they track the risk setting
         from config.user_profile import RISK_ENVELOPES
         env = RISK_ENVELOPES.get(risk_profile, RISK_ENVELOPES["Balanced"])
+        if self._strategy_mode == "COMMITTEE":
+            from strategy.committee_policy import committee_envelope
+            env = committee_envelope(env)
         stop_loss_pct   = env.stop_loss_pct
         take_profit_pct = env.take_profit_pct
         with self._lock:
@@ -1176,7 +1186,7 @@ class LiveTradingEngine:
         last_exc: Optional[Exception] = None
         try:
             snap = self._fetcher.fetch_with_fundamentals(
-                ticker, period="5d", interval="5m",
+                ticker, period="1mo" if self._strategy_mode == "COMMITTEE" else "5d", interval="5m",
             )
         except Exception as exc:
             last_exc = exc
@@ -1481,6 +1491,7 @@ class LiveTradingEngine:
 
         if strategy_mode == "COMMITTEE":
             decision = verdict.to_trading_decision(ticker)
+            report["raw_action"] = decision.action
             required_score = report["metrics"].get(
                 "required_committee_score",
             )
@@ -1513,6 +1524,49 @@ class LiveTradingEngine:
                         f"{required_score:+.2f}). "
                         + decision.reasoning
                     ),
+                })
+
+            from strategy.committee_policy import VERSION, assess_committee_entry
+            report["committee_policy_version"] = VERSION
+            report["committee_validation"] = "Experimental: historical holdout remains loss-making; profitability is not established"
+            if ticker not in self.portfolio.positions:
+                from risk.slippage import apply_slippage
+                from strategy.briefing import execution_entry_check
+                execution_ok, execution_reason = execution_entry_check(report, price, side=setup_side)
+                if not execution_ok:
+                    report["entry_allowed"] = False
+                    report["explanation"] = execution_reason
+                _, cost_bps = apply_slippage(
+                    price, "BUY", cfg=self._slippage_cfg,
+                    atr_pct=100 * (report["metrics"].get("atr") or 0) / price,
+                ) if self._enable_slippage else (price, 0.)
+                exits = [t for t in self.portfolio.trade_log if t.ticker == ticker
+                         and t.action in ("SELL", "COVER", "FORCE_CLOSE")]
+                minutes_since_exit = (
+                    (datetime.utcnow() - exits[-1].executed_at).total_seconds() / 60
+                    if exits else None
+                )
+                admission = assess_committee_entry(
+                    report, score=verdict.score, quorum=verdict.quorum_met,
+                    categories=verdict.category_scores,
+                    fee_rate=self.portfolio.fee_rate, slippage_bps=cost_bps,
+                    stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
+                    minutes_since_exit=minutes_since_exit,
+                )
+                report["committee_admission"] = admission.to_dict()
+                report["checks"].extend(admission.checks)
+                report["entry_allowed"] = admission.allowed
+                report["explanation"] = admission.reason
+                decision = decision.model_copy(update={
+                    "action": setup_action if admission.allowed else "HOLD",
+                    "confidence_score": setup_confidence or decision.confidence_score,
+                    "suggested_position_size_pct": admission.size_pct if admission.allowed else None,
+                    "reasoning": f"[{VERSION}] {admission.reason}. " + decision.reasoning,
+                })
+            elif decision.action == "BUY" and self.portfolio.positions[ticker].side == "LONG":
+                decision = decision.model_copy(update={
+                    "action": "HOLD", "attractiveness_label": "NEUTRAL",
+                    "reasoning": f"[{VERSION}] Existing long maintained; no committee pyramiding. " + decision.reasoning,
                 })
 
             with self._lock:
@@ -1726,19 +1780,23 @@ class LiveTradingEngine:
                 (is_short and decision.action == "BUY")
                 or (not is_short and decision.action == "SELL")
             )
+            exit_cost_pct = 0.0
+            if strategy_mode == "COMMITTEE":
+                from risk.slippage import apply_slippage
+                _, exit_bps = apply_slippage(price, "SELL", cfg=self._slippage_cfg) if self._enable_slippage else (price, 0.)
+                exit_cost_pct = 2 * (self.portfolio.fee_rate * 100 + exit_bps / 100)
             exit_assessment = assess_intraday_exit(
                 risk_profile=risk_profile,
                 opened_at=position_for_exit.opened_at,
                 now=datetime.utcnow(),
                 pnl_pct=position_for_exit.unrealized_pnl_pct,
-                signal_exit=research_exit,
+                signal_exit=research_exit or (strategy_mode == "COMMITTEE" and model_exit),
+                round_trip_cost_pct=exit_cost_pct,
             )
-            if model_exit or exit_assessment.should_exit:
+            if exit_assessment.should_exit or (strategy_mode != "COMMITTEE" and model_exit):
                 exit_action = "BUY" if is_short else "SELL"
-                exit_reason = (
-                    "Directional model/committee exit"
-                    if model_exit else exit_assessment.reason
-                )
+                exit_reason = ("Directional model exit" if strategy_mode != "COMMITTEE" and model_exit
+                               else exit_assessment.reason)
                 decision = decision.model_copy(update={
                     "action": exit_action,
                     "attractiveness_label": "NEUTRAL",
@@ -1753,6 +1811,19 @@ class LiveTradingEngine:
                     exit_reason,
                     level="WARN",
                 )
+            elif model_exit:
+                # Do not let the raw opposite action reach execution after
+                # the shared soft-exit policy deferred it. Hard stops and
+                # profit protection run independently before this stage.
+                decision = decision.model_copy(update={
+                    "action": "HOLD",
+                    "attractiveness_label": "NEUTRAL",
+                    "reasoning": (
+                        f"Directional exit deferred: {exit_assessment.reason}. "
+                        + decision.reasoning
+                    ),
+                })
+                self._emit(PulseStage.RISK, exit_assessment.reason, level="INFO")
 
         # Validate both entry directions; closing an existing position is exempt.
         entry_side = None
@@ -1776,7 +1847,7 @@ class LiveTradingEngine:
 
         # Apply an identical deterministic entry gate to every decision mode.
         # SELL/risk exits are never blocked by an entry-only trend filter.
-        report["raw_action"] = decision.action
+        report.setdefault("raw_action", decision.action)
         if (
             decision.action == "BUY"
             and not is_cover

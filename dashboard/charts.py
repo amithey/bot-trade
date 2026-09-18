@@ -62,25 +62,23 @@ def market_chart(df, ticker, trades=(), *, overlays=True, show_trades=True):
         stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
         return lower <= stamp < upper
     relevant = [t for t in trades if show_trades and t.ticker == ticker and visible_trade(t)]
-    buys  = [t for t in relevant if t.action == "BUY"]
-    sells = [t for t in relevant if "SELL" in t.action or t.action == "FORCE_CLOSE"]
-    if buys:
+    for action, symbol, color in (
+        ("BUY", "triangle-up", C_BUY),
+        ("SELL", "triangle-down", C_SELL),
+        ("SHORT", "triangle-down-open", C_SELL),
+        ("COVER", "triangle-up-open", C_BUY),
+        ("FORCE_CLOSE", "x", CYAN),
+    ):
+        fills = [t for t in relevant if t.action == action]
+        if not fills:
+            continue
         fig.add_trace(go.Scatter(
-            x=[t.executed_at for t in buys],
-            y=[t.price for t in buys],
-            mode="markers", name="BUY",
-            marker=dict(symbol="triangle-up", size=16, color=C_BUY,
+            x=[t.executed_at for t in fills],
+            y=[t.price for t in fills],
+            mode="markers", name=action,
+            marker=dict(symbol=symbol, size=16, color=color,
                         line=dict(width=2, color="white")),
-            hovertemplate="BUY $%{y:.2f}<extra></extra>",
-        ), row=1, col=1)
-    if sells:
-        fig.add_trace(go.Scatter(
-            x=[t.executed_at for t in sells],
-            y=[t.price for t in sells],
-            mode="markers", name="SELL",
-            marker=dict(symbol="triangle-down", size=16, color=C_SELL,
-                        line=dict(width=2, color="white")),
-            hovertemplate="SELL $%{y:.2f}<extra></extra>",
+            hovertemplate=action + " $%{y:.2f}<extra></extra>",
         ), row=1, col=1)
 
     # Volume bars colored by candle direction

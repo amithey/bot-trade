@@ -47,6 +47,7 @@ logs/
 data/user_profile.json
 data/user_profile.json.migrated
 data/yfinance_cache/
+data/research_reviews/committee_20260918/
 data/ml_models/*.joblib
 # Sidecar written by TradeJournalML.save() alongside the .joblib blob —
 # personal training stats (n_train / last_fit), regenerated on every fit.
