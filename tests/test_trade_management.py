@@ -44,3 +44,11 @@ def test_maximum_hold_closes_without_a_signal():
 
 def test_micro_scalp_uses_shorter_holding_window():
     assert assess(121, 0.0, signal=False, profile="Micro-Scalp").should_exit
+
+
+def test_committee_profit_exit_accounts_for_round_trip_costs():
+    args = dict(risk_profile="Balanced", opened_at=NOW - timedelta(minutes=45),
+                now=NOW, signal_exit=True, round_trip_cost_pct=.3)
+    assert not assess_intraday_exit(pnl_pct=.3, **args).should_exit
+    assert assess_intraday_exit(pnl_pct=.6, **args).should_exit
+    assert assess_intraday_exit(pnl_pct=-.5, **args).should_exit

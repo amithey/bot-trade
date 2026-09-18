@@ -93,14 +93,18 @@ def entry_features(
         ).mean()
         htf_fast = hourly_fast.reindex(df.index, method="ffill")
         htf_slow = hourly_slow.reindex(df.index, method="ffill")
+        # Compare three hourly observations before expanding to intraday
+        # rows; shifting the expanded series loses the slope within an hour.
+        htf_slow_prior = hourly_slow.shift(3).reindex(df.index, method="ffill")
     else:
         htf_fast, htf_slow = ema21, ema50
+        htf_slow_prior = htf_slow.shift(3)
     htf_bias = pd.Series("UNKNOWN", index=df.index)
     htf_bias.loc[
-        (htf_fast > htf_slow) & (htf_slow > htf_slow.shift(3))
+        (htf_fast > htf_slow) & (htf_slow > htf_slow_prior)
     ] = "LONG"
     htf_bias.loc[
-        (htf_fast < htf_slow) & (htf_slow < htf_slow.shift(3))
+        (htf_fast < htf_slow) & (htf_slow < htf_slow_prior)
     ] = "SHORT"
     rising_trend = (
         (close > ema50) & (ema21 > ema50) & (ema50 > ema50.shift(6))

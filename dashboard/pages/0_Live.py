@@ -793,7 +793,7 @@ with tab_tr:
                 "Ticker": t.ticker,
                 "Price":  f"${t.price:,.2f}",
                 "P&L":    f"${t.realized_pnl:+,.2f}",
-                "Reason": (t.reasoning or "")[:120],
+                "Reason": t.reasoning or "",
             })
         df_tr = pd.DataFrame(list(reversed(rows)))
         st.dataframe(df_tr, hide_index=True, width="stretch",

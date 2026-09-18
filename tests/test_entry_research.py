@@ -1,5 +1,6 @@
 """Causal entry gates and end-to-end paper execution regressions."""
 from types import SimpleNamespace as NS
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -12,8 +13,9 @@ from strategy.committee import CommitteeVerdict
 from strategy.committee_backtest import compare_entry_policies, backtest_committee
 
 
-def bars(down=False, n=260):
-    close = np.linspace(130, 100, n) if down else np.linspace(100, 126, n)
+def bars(down=False, n=1200):
+    # Keep the per-bar slope stable while providing enough hourly history.
+    close = np.linspace(100 + 30 * (n - 1) / 259, 100, n) if down else np.linspace(100, 126, n)
     idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").floor("5min")-pd.Timedelta(minutes=5), periods=n, freq="5min")
     df = pd.DataFrame({"Open": close-.1, "High": close+.4, "Low": close-.4,
                        "Close": close, "Volume": 1000.}, index=idx)
@@ -139,8 +141,10 @@ def live(monkeypatch):
             calls = 0
             def vote_latest(self, df, **kwargs):
                 self.calls += 1
-                return CommitteeVerdict(action, .5 if action == "BUY" else -.5,
-                                        28, 9, 1, 38, True)
+                score = .5 if action == "BUY" else -.5
+                return CommitteeVerdict(action, score,
+                                        28, 9, 1, 38, True,
+                                        category_scores={c: score for c in ("Trend", "Momentum", "Volume")})
         eng._committee = Committee()
         return eng, snap
     return build
@@ -182,6 +186,7 @@ def test_stop_loss_remains_active_on_already_analyzed_bar(live):
 def test_exit_signal_is_not_vetoed_by_entry_rules(live):
     eng, snap = live(bars(down=True), action="SELL")
     eng.portfolio.buy("BTC-USD", float(snap.data.Close.iloc[-1]), cash_amount=500)
+    eng.portfolio.positions["BTC-USD"].opened_at = datetime.utcnow() - timedelta(hours=9)
     eng._cycle_once()
     assert not eng.portfolio.positions
     assert eng.portfolio.trade_log[-1].action == "SELL"
@@ -383,7 +388,82 @@ def test_execution_entry_check_rejects_invalid_market_values(value):
 def test_short_cover_is_allowed_when_new_entries_are_blocked(live):
     eng, snap = live(bars(down=True), action="BUY")
     eng.portfolio.open_short("BTC-USD", float(snap.data.Close.iloc[-1]), cash_amount=500)
+    eng.portfolio.positions["BTC-USD"].opened_at = datetime.utcnow() - timedelta(hours=9)
     eng._safety.manual_block("No new exposure")
     eng._cycle_once()
     assert not eng.portfolio.positions
     assert eng.portfolio.trade_log[-1].action == "COVER"
+
+
+@pytest.mark.parametrize("down, expected", [(False, "LONG"), (True, "SHORT")])
+def test_hourly_bias_persists_between_hour_boundaries_without_lookahead(down, expected):
+    df = bars(down=down, n=1200)
+    # An exact hour-aligned sample makes the within-hour regression explicit.
+    df.index = pd.date_range("2026-09-01", periods=len(df), freq="5min", tz="UTC")
+    features = entry_features(df)
+    assert features.higher_timeframe_bias.iloc[-288:].eq(expected).all()
+    for cutoff in (1000, 1005, 1010):
+        pd.testing.assert_frame_equal(
+            features.iloc[:cutoff], entry_features(df.iloc[:cutoff]),
+        )
+
+
+@pytest.mark.parametrize("side, action", [("LONG", "SELL"), ("SHORT", "BUY")])
+@pytest.mark.parametrize("age, loss, closes", [(5, .006, False), (45, .001, False), (45, .006, True)])
+def test_committee_opposite_vote_obeys_soft_exit_policy(live, side, action, age, loss, closes):
+    eng, snap = live(bars(down=True), action=action)
+    eng._risk_profile = "Balanced"
+    price = float(snap.data.Close.iloc[-1])
+    entry = price / (1 - loss if side == "LONG" else 1 + loss)
+    opener = eng.portfolio.buy if side == "LONG" else eng.portfolio.open_short
+    opener("BTC-USD", entry, cash_amount=500)
+    eng.portfolio.positions["BTC-USD"].opened_at = datetime.utcnow() - timedelta(minutes=age)
+    eng._cycle_once()
+    assert ("BTC-USD" not in eng.portfolio.positions) == closes
+    if not closes:
+        assert len(eng.portfolio.trade_log) == 1
+        assert eng.snapshot()["last_decision"].action == "HOLD"
+        assert "Directional exit deferred" in eng.snapshot()["last_decision"].reasoning
+
+
+def test_live_committee_fails_closed_without_hourly_history(live):
+    eng, _ = live(bars(n=260))
+    eng._cycle_once()
+    assert not eng.portfolio.trade_log
+    report = eng.snapshot()["last_research"]
+    assert not report["committee_admission"]["allowed"]
+    assert "completed-hour" in report["explanation"]
+
+
+def test_live_committee_applies_risk_budget_and_records_costs(live):
+    eng, _ = live(bars())
+    eng._cycle_once()
+    report = eng.snapshot()["last_research"]
+    admission = report["committee_admission"]
+    assert report["committee_policy_version"] == "committee-v4"
+    assert admission["allowed"]
+    assert eng.portfolio.trade_log[0].gross_value <= 10000 * admission["size_pct"] / 100
+    assert "committee-v4" in eng.portfolio.trade_log[0].reasoning
+
+
+def test_committee_does_not_pyramid_even_on_aggressive_profile(live):
+    eng, snap = live(bars())
+    eng._risk_profile = "Aggressive"
+    eng.portfolio.buy("BTC-USD", float(snap.data.Close.iloc[-1]) * .999, cash_amount=500)
+    eng._cycle_once()
+    assert len(eng.portfolio.trade_log) == 1
+    assert eng.snapshot()["last_decision"].action == "HOLD"
+
+
+def test_committee_exit_changes_do_not_delay_ai_exits(live, monkeypatch):
+    eng, snap = live(bars(), action="SELL")
+    eng._strategy_mode = "AI"
+    eng.portfolio.buy("BTC-USD", float(snap.data.Close.iloc[-1]), cash_amount=500)
+    eng._retriever = NS(get_relevant_strategies=lambda *a, **k: NS(chunks=[]))
+    decision = CommitteeVerdict("SELL", -.5, 9, 28, 1, 38, True).to_trading_decision("BTC-USD")
+    monkeypatch.setattr(eng, "_ai_engine", lambda: NS(evaluate_market=lambda *a, **k: decision))
+    monkeypatch.setattr(eng, "_shared_decision", lambda *a, **k: k["compute"]())
+    eng._cycle_once()
+    assert eng.portfolio.trade_log[-1].action == "SELL"
+    assert not eng.portfolio.positions
+    assert "committee_admission" not in eng.snapshot()["last_research"]

@@ -105,6 +105,16 @@ def render_entry_research(report) -> None:
     st.write(report["explanation"])
     if report.get("policy_version"):
         st.caption(f"Engine policy: {report['policy_version']}")
+    if report.get("committee_validation"):
+        st.warning(report["committee_validation"])
+    if report.get("committee_admission"):
+        admission = report["committee_admission"]
+        st.caption(
+            f"{report['committee_policy_version']} · Estimated round-trip costs "
+            f"{admission['round_trip_cost_pct']:.3f}% · Net target/stop ratio "
+            f"{admission['net_reward_risk']:.2f} · Risk-based exposure ceiling "
+            f"{admission['size_pct']:.1f}% (account caps still apply)"
+        )
     if report.get("raw_action"):
         st.caption(f"Strategy candidate: {report['raw_action']} → filtered signal: {report.get('filtered_action', '—')}. "
                    "An eligible signal still needs the account's confidence, cash and safety checks.")

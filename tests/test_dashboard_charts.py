@@ -55,3 +55,19 @@ def test_old_trades_do_not_expand_the_selected_chart_window():
     figure = market_chart(df, "AAPL", [old], overlays=False)
     assert not any(t.name in ("BUY", "SMA20") for t in figure.data)
     assert list(figure.data[0].close) == [101, 102]
+
+
+def test_chart_distinguishes_short_entries_and_covers_and_respects_visibility():
+    df = pd.DataFrame({"Open": [100, 101], "High": [102, 103], "Low": [99, 100],
+                       "Close": [101, 102]}, index=pd.date_range("2026-09-01", periods=2))
+    actions = ("BUY", "SELL", "SHORT", "COVER", "FORCE_CLOSE")
+    trades = [SimpleNamespace(ticker="BTC-USD", action=action, price=100 + i,
+                             executed_at=datetime(2026, 9, 1))
+              for i, action in enumerate(actions)]
+    figure = market_chart(df, "BTC-USD", trades)
+    for i, action in enumerate(actions):
+        trace = next(t for t in figure.data if t.name == action)
+        assert list(trace.y) == [100 + i]
+        assert trace.hovertemplate.startswith(action + " ")
+    hidden = market_chart(df, "BTC-USD", trades, show_trades=False)
+    assert not any(t.name in actions for t in hidden.data)
