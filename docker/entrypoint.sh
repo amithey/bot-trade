@@ -38,7 +38,7 @@ if [ "${BOTTRADE_TREND_SCANNER:-0}" = "1" ]; then
     (
         cd "$APP_DIR"
         while true; do
-            python -X utf8 -m tools.run_trend_scanner --state-dir "$APP_DIR/data/trend_scanner_paper"                 --loop-minutes 30 >> "$APP_DIR/logs/trend_scanner.log" 2>&1 || true
+            python -X utf8 -m tools.run_trend_scanner --state-dir "$APP_DIR/data/trend_scanner_paper"                 --loop-minutes 30 2>&1 | tee -a "$APP_DIR/logs/trend_scanner.log" || true
             sleep 60
         done
     ) &
