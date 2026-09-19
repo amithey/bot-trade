@@ -129,6 +129,7 @@ def live(monkeypatch):
     from notifications import NotificationConfig
     import market_data.research_context as context
     monkeypatch.setattr(context, "news_context", lambda ticker: {"status":"unavailable","items":[]})
+    monkeypatch.setattr("market_data.committee_fundamentals.crypto_context", lambda ticker: {"status": "UNAVAILABLE", "metrics": {}})
     monkeypatch.setattr(NotificationConfig, "load", lambda: NotificationConfig())
     def build(df, action="BUY"):
         snap = MarketSnapshot("BTC-USD", df, (20,50,200), 14, MACDParams())
@@ -440,10 +441,49 @@ def test_live_committee_applies_risk_budget_and_records_costs(live):
     eng._cycle_once()
     report = eng.snapshot()["last_research"]
     admission = report["committee_admission"]
-    assert report["committee_policy_version"] == "committee-v4"
+    assert report["committee_policy_version"] == "committee-v5-adx25"
     assert admission["allowed"]
     assert eng.portfolio.trade_log[0].gross_value <= 10000 * admission["size_pct"] / 100
-    assert "committee-v4" in eng.portfolio.trade_log[0].reasoning
+    assert "committee-v5-adx25" in eng.portfolio.trade_log[0].reasoning
+    assert report["committee_evidence"]["mode"] == "SHADOW"
+    assert report["committee_evidence"]["base_allowed"]
+
+
+@pytest.mark.parametrize("value, allowed", [(19., False), (24.99, False), (25., True), (float("nan"), False)])
+def test_live_committee_adx_gate_cannot_be_overruled_by_votes(live, monkeypatch, value, allowed):
+    eng, _ = live(bars())
+    def fixed_adx(df, period):
+        series = pd.Series(value, index=df.index)
+        return series, series, series
+    monkeypatch.setattr("strategy.committee._adx", fixed_adx)
+    eng._cycle_once()
+    report = eng.snapshot()["last_research"]
+    assert report["committee_admission"]["allowed"] == allowed
+    assert bool(eng.portfolio.trade_log) == allowed
+    check = next(c for c in report["checks"] if c["name"] == "ADX trend strength")
+    assert check["passed"] == allowed
+    if not allowed:
+        assert not report["committee_evidence"]["candidate_allowed"]
+
+
+def test_unavailable_candidate_research_cannot_stop_production_entry(live, monkeypatch):
+    eng, _ = live(bars())
+    def unavailable(*args, **kwargs):
+        raise ValueError("Provider unavailable")
+    monkeypatch.setattr("strategy.committee_evidence.decision_evidence", unavailable)
+    eng._cycle_once()
+    assert eng.portfolio.trade_log[0].action == "BUY"
+    assert eng.snapshot()["last_research"]["committee_evidence"]["status"] == "UNAVAILABLE"
+
+
+def test_live_weak_adx_never_blocks_an_existing_position_exit(live, monkeypatch):
+    eng, snap = live(bars(), action="SELL")
+    eng.portfolio.buy("BTC-USD", float(snap.data.Close.iloc[-1]), cash_amount=500)
+    eng.portfolio.positions["BTC-USD"].opened_at = datetime.utcnow() - timedelta(hours=9)
+    monkeypatch.setattr("strategy.committee._adx", lambda df, period: (pd.Series(10., index=df.index),) * 3)
+    eng._cycle_once()
+    assert not eng.portfolio.positions
+    assert eng.portfolio.trade_log[-1].action == "SELL"
 
 
 def test_committee_does_not_pyramid_even_on_aggressive_profile(live):

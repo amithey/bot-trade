@@ -7,6 +7,8 @@ from dataclasses import dataclass, asdict, replace
 from math import isfinite
 
 VERSION = "committee-v4"
+LIVE_VERSION = "committee-v5-adx25"
+LIVE_ADX_MIN = 25.0
 TREND_SETUPS = {
     "LONG": {"TREND_BREAKOUT", "TREND_PULLBACK", "MOMENTUM_CONTINUATION"},
     "SHORT": {"SHORT_TREND_BREAKDOWN", "SHORT_RALLY_REJECTION"},
@@ -100,3 +102,18 @@ def committee_profit_config(base, stop_loss_pct):
         retain_fraction=base.retain_fraction,
         minimum_net_pct=base.minimum_net_pct,
     )
+
+
+def assess_live_committee_entry(report, **kwargs):
+    """Production ADX gate on top of v4; exits and research baseline unchanged."""
+    admission = assess_committee_entry(report, **kwargs)
+    adx = report.get("metrics", {}).get("adx")
+    valid = isinstance(adx, (int, float)) and not isinstance(adx, bool) and isfinite(adx) and 0 <= adx <= 100
+    passed = valid and adx >= LIVE_ADX_MIN
+    detail = (f"ADX(14) {adx:.2f}; need >= {LIVE_ADX_MIN:.0f} on a completed 5-minute candle"
+              if valid else "Missing or invalid ADX(14); new committee entry blocked")
+    checks = admission.checks + [{"name": "ADX trend strength", "passed": bool(passed), "detail": detail}]
+    allowed = admission.allowed and passed
+    return replace(admission, allowed=allowed, checks=checks,
+                   size_pct=admission.size_pct if allowed else 0.,
+                   reason=admission.reason + "; " + detail)

@@ -50,6 +50,8 @@ _committee_lab = st.Page("pages/9_Committee_Lab.py", title="Committee Lab",
                          icon=":material/how_to_vote:")
 _usage_billing = st.Page("pages/10_Usage_and_Billing.py", title="Usage & Billing",
                          icon=":material/receipt_long:")
+_trend_scanner = st.Page("pages/11_Trend_Scanner.py", title="Trend Scanner",
+                         icon=":material/trending_up:")
 
 # Four sections, each one word, each answering a different question:
 #   Trade    — what is the bot doing with my money right now?
@@ -60,10 +62,10 @@ _usage_billing = st.Page("pages/10_Usage_and_Billing.py", title="Usage & Billing
 # Register every route; expose a small primary navigation surface.
 _page = st.navigation([_live, _portfolio, _market_research, _settings,
                        _sector_heatmap, _watchlist_scanner, _knowledge,
-                       _ml_lab, _analytics, _committee_lab, _usage_billing], position="hidden")
+                       _ml_lab, _analytics, _committee_lab, _usage_billing, _trend_scanner], position="hidden")
 with st.sidebar:
     st.markdown('<div class="nav-caption">WORKSPACE</div>', unsafe_allow_html=True)
-    for page, label in ((_live, "Your agent"), (_portfolio, "Portfolio"),
+    for page, label in ((_live, "Your agent"), (_trend_scanner, "Trend scanner"), (_portfolio, "Portfolio"),
                         (_market_research, "Research"), (_settings, "Settings")):
         st.page_link(page, label=label, width="stretch")
     with st.expander("Advanced tools", expanded=False):
