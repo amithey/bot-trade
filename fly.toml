@@ -18,6 +18,8 @@ primary_region = "iad"  # us-east (Ashburn, VA) — change to whatever is closes
 
 [env]
   BOTTRADE_ENV = "production"
+  # Runs the paper trend scanner beside the dashboard (docker/entrypoint.sh).
+  BOTTRADE_TREND_SCANNER = "1"
   # Streamlit reads these from the process environment directly; the
   # Dockerfile already bakes the address/port/headless flags, this just
   # keeps them explicit for anyone reading the Fly config.

@@ -130,6 +130,22 @@ def render_entry_research(report) -> None:
             st.dataframe([{"Metric": k, "Value": v} for k, v in report["metrics"].items()],
                          hide_index=True, width="stretch")
             st.caption("Support/resistance and volume averages exclude the signal candle. Entry gates are rule-based hypotheses, not return forecasts.")
+        candidate = report.get("committee_evidence")
+        if candidate:
+            with st.expander("Candidate strategy comparison", expanded=False):
+                st.caption("Observation only: these additional checks do not place or block orders.")
+                if candidate.get("status") == "UNAVAILABLE":
+                    st.write("Additional research unavailable; the active strategy is unchanged.")
+                else:
+                    st.write(f"Candidate entry action: {candidate.get('candidate_action', 'Not applicable to an open position')}")
+                    st.dataframe(candidate.get("chart_assessment", {}).get("checks", []), hide_index=True, width="stretch")
+                    st.write("Confirmed chart structure", candidate.get("chart", {}).get("structure", "UNKNOWN"))
+                    fundamentals = candidate.get("fundamentals", {})
+                    st.write("Fundamental coverage", fundamentals.get("status", "UNAVAILABLE"))
+                    for observation in fundamentals.get("observations", []):
+                        st.write(observation)
+                    st.caption(fundamentals.get("limitations", ""))
+                    st.caption("A passed check is not a probability of profit. Company statements are not a valuation model for crypto.")
     with context:
         with st.expander("Fundamental context"):
             analysis = report.get("fundamental_analysis") or {}

@@ -30,4 +30,18 @@ if [ -n "${BOTTRADE_STREAMLIT_SECRETS:-}" ]; then
     printf '%s' "$BOTTRADE_STREAMLIT_SECRETS" > "$APP_DIR/.streamlit/secrets.toml"
 fi
 
+# Daily multi-asset trend scanner (paper account, data/trend_scanner_paper/).
+# A sibling process, not part of Streamlit, so it keeps running with no user
+# signed in and restarts itself if it ever exits. Off unless the host opts in.
+if [ "${BOTTRADE_TREND_SCANNER:-0}" = "1" ]; then
+    mkdir -p "$APP_DIR/logs"
+    (
+        cd "$APP_DIR"
+        while true; do
+            python -X utf8 -m tools.run_trend_scanner --state-dir "$APP_DIR/data/trend_scanner_paper"                 --loop-minutes 30 2>&1 | tee -a "$APP_DIR/logs/trend_scanner.log" || true
+            sleep 60
+        done
+    ) &
+fi
+
 exec "$@"

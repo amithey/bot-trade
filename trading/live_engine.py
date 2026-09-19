@@ -1526,7 +1526,26 @@ class LiveTradingEngine:
                     ),
                 })
 
-            from strategy.committee_policy import VERSION, assess_committee_entry
+            from strategy.committee_policy import LIVE_VERSION as VERSION, assess_live_committee_entry
+            from strategy.committee import _adx
+            from math import isfinite
+            # snap.data has already passed completed_bars above. Never use
+            # the still-forming quote candle for the mandatory entry gate.
+            adx_value = float(_adx(snap.data, 14)[0].iloc[-1])
+            report["metrics"]["adx"] = adx_value if isfinite(adx_value) else None
+            # Candidate research is measured alongside production decisions.
+            # Keep unvalidated filters out of execution until their benefit
+            # survives costed validation; never treat absent data as approval.
+            try:
+                from strategy.committee_evidence import decision_evidence
+                from market_data.committee_fundamentals import crypto_context
+                report["committee_evidence"] = decision_evidence(
+                    snap.data, ticker=ticker, side=setup_side,
+                    fundamentals=snap.fundamentals,
+                    crypto=crypto_context(ticker) if ticker.endswith(("-USD", "-USDT")) else None,
+                )
+            except Exception as exc:
+                report["committee_evidence"] = {"mode": "SHADOW", "status": "UNAVAILABLE", "reason": str(exc)}
             report["committee_policy_version"] = VERSION
             report["committee_validation"] = "Experimental: historical holdout remains loss-making; profitability is not established"
             if ticker not in self.portfolio.positions:
@@ -1546,7 +1565,7 @@ class LiveTradingEngine:
                     (datetime.utcnow() - exits[-1].executed_at).total_seconds() / 60
                     if exits else None
                 )
-                admission = assess_committee_entry(
+                admission = assess_live_committee_entry(
                     report, score=verdict.score, quorum=verdict.quorum_met,
                     categories=verdict.category_scores,
                     fee_rate=self.portfolio.fee_rate, slippage_bps=cost_bps,
@@ -1554,6 +1573,10 @@ class LiveTradingEngine:
                     minutes_since_exit=minutes_since_exit,
                 )
                 report["committee_admission"] = admission.to_dict()
+                candidate = report.get("committee_evidence", {})
+                candidate["base_allowed"] = admission.allowed
+                candidate["candidate_allowed"] = admission.allowed and bool(candidate.get("candidate_allowed", False))
+                candidate["candidate_action"] = setup_action if candidate["candidate_allowed"] else "HOLD"
                 report["checks"].extend(admission.checks)
                 report["entry_allowed"] = admission.allowed
                 report["explanation"] = admission.reason
@@ -1568,6 +1591,14 @@ class LiveTradingEngine:
                     "action": "HOLD", "attractiveness_label": "NEUTRAL",
                     "reasoning": f"[{VERSION}] Existing long maintained; no committee pyramiding. " + decision.reasoning,
                 })
+
+            try:
+                from strategy.committee_observations import record_observation
+                report["observation_recorded"] = record_observation(
+                    getattr(self._tenant, "account_id", None), report)
+            except Exception:
+                # Research logging must never prevent protective execution.
+                report["observation_recorded"] = False
 
             with self._lock:
                 self._last_decision = decision
