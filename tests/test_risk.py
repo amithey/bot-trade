@@ -471,3 +471,53 @@ def test_micro_scalp_slips_less_than_aggressive():
     aggr = SlippageConfig.for_profile("Aggressive")
     assert micro.base_bps < aggr.base_bps
     assert micro.max_bps < aggr.max_bps
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fixed restart point for the consecutive-loss breaker
+
+def test_losses_before_the_reset_point_no_longer_trip_the_breaker():
+    cfg = SafetyConfig(max_consecutive_losses=3, tilt_loss_pct=0, streak_reset_at=_at(hours_ago=1))
+    log = [_trade("SELL", pnl=-10, at=_at(hours_ago=i)) for i in range(5, 2, -1)]
+    status = SafetyController(cfg).check(log, initial_capital=10_000, now=NOW)
+    assert not status.is_blocked and status.consecutive_losses == 0
+
+
+def test_the_same_log_still_blocks_without_a_reset_point():
+    cfg = SafetyConfig(max_consecutive_losses=3, tilt_loss_pct=0, streak_reset_at=None)
+    log = [_trade("SELL", pnl=-10, at=_at(hours_ago=i)) for i in range(5, 2, -1)]
+    assert SafetyController(cfg).check(log, initial_capital=10_000, now=NOW).is_blocked
+
+
+def test_losses_after_the_reset_point_count_and_can_trip_it_again():
+    cfg = SafetyConfig(max_consecutive_losses=3, tilt_loss_pct=0, streak_reset_at=_at(hours_ago=10))
+    old = [_trade("SELL", pnl=-10, at=_at(hours_ago=i)) for i in (14, 13, 12)]
+    new = [_trade("SELL", pnl=-10, at=_at(hours_ago=i)) for i in (3, 2, 1)]
+    assert not SafetyController(cfg).check(old, initial_capital=10_000, now=NOW).is_blocked
+    status = SafetyController(cfg).check(old + new, initial_capital=10_000, now=NOW)
+    assert status.is_blocked and status.consecutive_losses == 3
+
+
+def test_a_trade_exactly_at_the_reset_point_is_excluded():
+    stamp = _at(hours_ago=2)
+    cfg = SafetyConfig(max_consecutive_losses=1, tilt_loss_pct=0, streak_reset_at=stamp)
+    status = SafetyController(cfg).check([_trade("SELL", pnl=-10, at=stamp)], initial_capital=10_000, now=NOW)
+    assert not status.is_blocked
+
+
+def test_reset_point_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("BOTTRADE_LOSS_STREAK_RESET_AT", "2026-11-01T02:00:00+02:00")
+    assert SafetyConfig.for_profile("Balanced").streak_reset_at == datetime(2026, 11, 1, 0, 0)
+    monkeypatch.setenv("BOTTRADE_LOSS_STREAK_RESET_AT", "2026-11-01T00:00:00Z")
+    assert SafetyConfig().streak_reset_at == datetime(2026, 11, 1, 0, 0)
+
+
+@pytest.mark.parametrize("value", ["", "   ", "not-a-date", "2026-13-45"])
+def test_missing_or_invalid_reset_point_means_no_reset(monkeypatch, value):
+    monkeypatch.setenv("BOTTRADE_LOSS_STREAK_RESET_AT", value)
+    assert SafetyConfig().streak_reset_at is None
+
+
+def test_reset_point_is_not_set_by_default(monkeypatch):
+    monkeypatch.delenv("BOTTRADE_LOSS_STREAK_RESET_AT", raising=False)
+    assert SafetyConfig.for_profile("Balanced").streak_reset_at is None
