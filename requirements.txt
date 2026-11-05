@@ -29,7 +29,7 @@ chromadb==1.5.7
 # Not imported directly: rag/retriever.py uses ChromaDB's
 # SentenceTransformerEmbeddingFunction, which loads these at runtime.
 # torch is CPU-only here; swap for a +cu wheel if the host has a GPU.
-sentence-transformers==5.4.1
+sentence-transformers==5.6.0
 torch==2.11.0
 transformers==5.10.0
 
@@ -69,7 +69,7 @@ paddle-python-sdk==1.15.0
 # --- Authentication -----------------------------------------------------------
 # Required only when [auth] is configured in .streamlit/secrets.toml; without
 # it the app runs in open or shared-password mode. See DEPLOY.md section 2b.
-Authlib==1.7.2
+Authlib==1.9.1
 
 # Cookie read/write for the built-in email+password accounts
 # (AUTH_ACCOUNTS_ENABLED=true). Streamlit's own st.context.cookies is
