@@ -1,13 +1,11 @@
-"""Paper runner for the multi-asset daily trend scanner.
+"""Paper runner for the multi-asset daily / 4H trend scanner with Core/Satellite regime allocation.
 
-Each `step()` fetches daily bars for the whole universe and:
-1. fills orders decided on an earlier completed day once that asset's next
-   session has started (the simulator fills these at the next open);
-2. treats each chandelier stop as a resting stop order: if the session low
-   touches it, the exit fills at the worse of the stop and the session open;
-3. decides with `plan_day` on every newly completed daily bar.
-Decisions never use a still-forming bar. State lives in two JSON files so a
-restart resumes exactly. Paper only: no broker connection exists here.
+Each `step()` fetches bars for the universe and:
+1. maintains Core regime allocation (when enabled) to prevent runaway underperformance;
+2. fills orders decided on earlier completed bars;
+3. manages trailing chandelier ATR stops;
+4. scans and ranks momentum breakouts across the multi-asset universe.
+Paper only: virtual portfolio, no live money brokerage.
 """
 import json
 from datetime import datetime, timezone
@@ -18,22 +16,46 @@ import pandas as pd
 from portfolio.virtual_account import LivePortfolio
 from strategy.trend_scanner import ScannerConfig, plan_day, scanner_features
 
-UNIVERSE = ["SPY", "QQQ", "IWM", "TLT", "GLD", "EEM", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOGL", "TSLA",
-            "JPM", "XOM", "JNJ", "WMT", "KO", "INTC", "PFE", "BA", "DIS", "VZ", "BTC-USD", "ETH-USD", "ADA-USD", "SOL-USD"]
-# Chosen by training-window Sharpe in tools/evaluate_trend_scanner.py (2016-2021).
+UNIVERSE = [
+    # Broad Index & Sector Leaders
+    "SPY", "QQQ", "IWM", "SMH", "TLT", "GLD", "EEM",
+    # Megacap Tech & Semiconductor Momentum Leaders
+    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD",
+    # Quality Growth & Defensive Compounders
+    "LLY", "COST", "NFLX", "JPM", "XOM", "JNJ", "WMT", "KO", "DIS", "BA",
+    # Top Liquid Crypto
+    "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "ADA-USD"
+]
+
+# Default configuration declared before results
 CONFIG = ScannerConfig(entry_rule="ma_10_50", stop_atr=5., max_positions=10)
 SLIPPAGE_BPS = 5.
 STOCK_CLOSE_HOUR_NY = 16
 
 
-def fetch_daily(ticker):
+def fetch_bars(ticker, interval="1d"):
+    """Fetch market bars for a given ticker and interval."""
     import yfinance as yf
+    if interval == "4h":
+        df = yf.Ticker(ticker).history(period="60d", interval="1h", auto_adjust=True, actions=False, timeout=30)
+        if len(df) == 0:
+            return pd.DataFrame()
+        df_4h = df.resample("4h").agg({
+            "Open": "first", "High": "max", "Low": "min", "Close": "last"
+        }).dropna()
+        return df_4h[["Open", "High", "Low", "Close"]]
     df = yf.Ticker(ticker).history(period="2y", interval="1d", auto_adjust=True, actions=False, timeout=30)
     return df[["Open", "High", "Low", "Close"]].dropna()
 
 
+def fetch_daily(ticker):
+    return fetch_bars(ticker, interval="1d")
+
+
 def session_frame(df, ticker, now):
     """Naive session-date index plus whether the last bar's session has closed."""
+    if df is None or len(df) == 0:
+        return pd.DataFrame(), False
     crypto = ticker.endswith("-USD")
     zone = "UTC" if crypto else "America/New_York"
     index = pd.DatetimeIndex(df.index)
@@ -51,9 +73,17 @@ def session_frame(df, ticker, now):
 
 
 class TrendScannerRunner:
-    def __init__(self, state_dir, *, universe=UNIVERSE, config=CONFIG, fetch=fetch_daily, capital=10000.):
+    def __init__(self, state_dir, *, universe=UNIVERSE, config=CONFIG, fetch=None, interval="1d",
+                 core_satellite=False, capital=10000.):
         self.state_dir = Path(state_dir)
-        self.universe, self.config, self.fetch = list(universe), config, fetch
+        self.universe = list(universe)
+        self.config = config
+        self.interval = interval
+        self.core_satellite = core_satellite
+        if fetch is None:
+            self.fetch = lambda t: fetch_bars(t, interval=self.interval)
+        else:
+            self.fetch = fetch
         self.portfolio_path = self.state_dir / "portfolio.json"
         self.state_path = self.state_dir / "scanner_state.json"
         self.portfolio = (LivePortfolio.load(self.portfolio_path) if self.portfolio_path.exists()
@@ -78,11 +108,32 @@ class TrendScannerRunner:
                 frames[ticker], closed[ticker] = session_frame(self.fetch(ticker), ticker, now)
             except Exception as exc:                      # one bad feed must not stop the rest
                 errors[ticker] = str(exc)
+
         # Positions the portfolio no longer holds (manual close) lose their scanner state.
         for ticker in list(self.state["positions"]):
             if ticker not in self.portfolio.positions:
                 self.state["positions"].pop(ticker)
+
+        # Core/Satellite Regime rebalance check (if enabled)
+        if self.core_satellite and "SPY" in frames and len(frames["SPY"]) > 0:
+            try:
+                from strategy.regime_core_satellite import calculate_core_rebalance_action
+                core_action = calculate_core_rebalance_action(self.portfolio, frames["SPY"])
+                if core_action["action"] == "BUY" and core_action["rebalance_cash"] > 10:
+                    core_fill = float(frames["SPY"].iloc[-1]["Close"]) * (1 + SLIPPAGE_BPS / 10000)
+                    self.portfolio.buy("SPY", core_fill, cash_amount=core_action["rebalance_cash"],
+                                       reasoning=f"Core/Satellite Regime: {core_action['reason']}")
+                    self._event(now, "CORE_REBALANCE", "SPY", f"BUY ${core_action['rebalance_cash']:,.2f} @ {core_fill:.2f}")
+                elif core_action["action"] == "SELL" and "SPY" in self.portfolio.positions:
+                    core_fill = float(frames["SPY"].iloc[-1]["Close"]) * (1 - SLIPPAGE_BPS / 10000)
+                    self.portfolio.sell("SPY", core_fill, reasoning=f"Core/Satellite Regime: {core_action['reason']}")
+                    self._event(now, "CORE_REBALANCE", "SPY", f"SELL @ {core_fill:.2f}")
+            except Exception as exc:
+                errors["core_satellite"] = str(exc)
+
         for ticker, df in frames.items():
+            if len(df) == 0:
+                continue
             bar, stamp = df.iloc[-1], df.index[-1]
             self.portfolio.update_price(ticker, float(bar.Close))
             decided_on = pd.Timestamp(self.state["decided"].get(ticker, "1900-01-01"))
@@ -90,7 +141,7 @@ class TrendScannerRunner:
             if session_started and ticker in self.state["pending_exits"]:
                 self.state["pending_exits"].pop(ticker)
                 if ticker in self.portfolio.positions:
-                    self._sell(ticker, float(bar.Open), now, "Trend break at completed daily close")
+                    self._sell(ticker, float(bar.Open), now, "Trend break at completed close")
             order = self.state["pending_entries"].get(ticker) if session_started else None
             if order is not None:
                 self.state["pending_entries"].pop(ticker)
@@ -106,10 +157,13 @@ class TrendScannerRunner:
             held = self.state["positions"].get(ticker)
             if held is not None and stamp > pd.Timestamp(held.get("stop_set_on", "1900-01-01")) and float(bar.Low) <= held["stop"]:
                 self._sell(ticker, min(float(bar.Open), held["stop"]), now, "Chandelier stop")
+
         # Decide only on bars that are complete and not decided before.
         today = {}
         for ticker, df in frames.items():
-            complete = df if closed[ticker] else df.iloc[:-1]
+            if len(df) == 0:
+                continue
+            complete = df if closed.get(ticker, False) else df.iloc[:-1]
             if len(complete) == 0:
                 continue
             stamp = complete.index[-1]
@@ -129,7 +183,15 @@ class TrendScannerRunner:
             for ticker in today:
                 if ticker in self.state["positions"]:
                     self.state["positions"][ticker]["stop_set_on"] = self.state["decided"][ticker]
-        self.state["last_step"] = {"at": now.isoformat(), "errors": errors, "decided": sorted(today)}
+
+        self.state["last_step"] = {
+            "at": now.isoformat(),
+            "errors": errors,
+            "decided": sorted(today),
+            "interval": self.interval,
+            "core_satellite": self.core_satellite,
+            "universe_count": len(self.universe),
+        }
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.portfolio.save(self.portfolio_path)
         self.state_path.write_text(json.dumps(self.state, indent=2), encoding="utf-8")
