@@ -1,4 +1,4 @@
-"""Committee-only admission rules. Fixed research rules, not profit forecasts.
+"""Committee admission rules with continuous composite setup scoring and dynamic sizing.
 
 The vote is confirmation, never the trading thesis. Corporate ratios are not
 used to value crypto; the policy uses completed price/volume evidence and costs.
@@ -7,8 +7,10 @@ from dataclasses import dataclass, asdict, replace
 from math import isfinite
 
 VERSION = "committee-v4"
-LIVE_VERSION = "committee-v5-adx25"
+LIVE_VERSION = "committee-v6-composite"
 LIVE_ADX_MIN = 25.0
+LIVE_ADX_SOFT_MIN = 20.0
+COMPOSITE_SCORE_THRESHOLD = 65.0
 TREND_SETUPS = {
     "LONG": {"TREND_BREAKOUT", "TREND_PULLBACK", "MOMENTUM_CONTINUATION"},
     "SHORT": {"SHORT_TREND_BREAKDOWN", "SHORT_RALLY_REJECTION"},
@@ -32,9 +34,71 @@ class CommitteeAdmission:
     size_pct: float
     round_trip_cost_pct: float
     net_reward_risk: float
+    composite_score: float = 0.0
+    quality_tier: str = "NONE"
 
     def to_dict(self):
         return asdict(self)
+
+
+def calculate_composite_setup_score(report, *, score, quorum, categories, adx=None) -> float:
+    """Calculate a 0-100 continuous composite setup score.
+
+    Weights:
+    - Trend & Regime Playbook: up to 25 pts
+    - Timeframe / Hourly Confirmation: up to 15 pts
+    - Committee Net Score & Quorum: up to 25 pts
+    - Category Breadth (Trend/Momentum/Volume): up to 15 pts
+    - ADX / Trend Strength: up to 20 pts
+    """
+    side = report.get("signal_side", "NONE")
+    sign = -1 if side == "SHORT" else 1
+    total = 0.0
+
+    # 1. Regime & Setup (25 pts)
+    target_regime = "DOWNTREND" if side == "SHORT" else "UPTREND"
+    if report.get("regime") == target_regime:
+        total += 15.0
+    if report.get("setup") in TREND_SETUPS.get(side, set()):
+        total += 10.0
+
+    # 2. Hourly confirmation (15 pts)
+    bias = report.get("timeframe_bias")
+    if bias == side and side != "NONE":
+        total += 15.0
+    elif bias in (None, "UNKNOWN", "NEUTRAL"):
+        total += 5.0
+
+    # 3. Committee Score & Quorum (25 pts)
+    if quorum:
+        total += 5.0
+    dir_score = sign * score if isinstance(score, (int, float)) and isfinite(score) else 0.0
+    if dir_score >= 0.25:
+        total += 20.0
+    elif dir_score >= 0.16:
+        total += 15.0
+    elif dir_score >= 0.10:
+        total += 10.0
+    elif dir_score > 0.0:
+        total += 5.0
+
+    # 4. Category confirmation (15 pts - 5 pts each)
+    if isinstance(categories, dict):
+        for cat in ("Trend", "Momentum", "Volume"):
+            val = categories.get(cat)
+            if isinstance(val, (int, float)) and isfinite(val) and sign * val > 0:
+                total += 5.0
+
+    # 5. ADX Strength (20 pts)
+    if isinstance(adx, (int, float)) and not isinstance(adx, bool) and isfinite(adx):
+        if adx >= LIVE_ADX_MIN:
+            total += 20.0
+        elif adx >= LIVE_ADX_SOFT_MIN:
+            total += 10.0 + 10.0 * (adx - LIVE_ADX_SOFT_MIN) / (LIVE_ADX_MIN - LIVE_ADX_SOFT_MIN)
+        elif adx >= 15.0:
+            total += 10.0 * (adx - 15.0) / (LIVE_ADX_SOFT_MIN - 15.0)
+
+    return min(100.0, max(0.0, total))
 
 
 def assess_committee_entry(report, *, score, quorum, categories, fee_rate,
@@ -56,7 +120,7 @@ def assess_committee_entry(report, *, score, quorum, categories, fee_rate,
                       and metrics["close"] > 0 and metrics["atr"] > 0)
     if not valid:
         return CommitteeAdmission(False, "Missing or invalid committee cost/price evidence",
-                                  [], 0., 0., 0.)
+                                  [], 0., 0., 0., 0.0, "NONE")
     cost = 2 * (fee_rate * 100 + slippage_bps / 100)
     net_rr = (take_profit_pct - cost) / (stop_loss_pct + cost)
     volatility_budget = 6 * metrics["atr"] / metrics["close"] * 100
@@ -88,10 +152,26 @@ def assess_committee_entry(report, *, score, quorum, categories, fee_rate,
     check("Re-entry cooldown", cooldown_ok,
           f"Wait {COOLDOWN_MINUTES} minutes after an exit before opening new exposure")
     failures = [c["detail"] for c in checks if not c["passed"]]
-    size = min(100., 100 * RISK_BUDGET_PCT / (stop_loss_pct + cost))
+    base_size = min(100., 100 * RISK_BUDGET_PCT / (stop_loss_pct + cost))
+
+    adx_val = metrics.get("adx")
+    composite_score = calculate_composite_setup_score(
+        report, score=score, quorum=quorum, categories=categories, adx=adx_val,
+    )
+    if composite_score >= 85.0:
+        quality_tier = "HIGH_CONVICTION"
+    elif composite_score >= 70.0:
+        quality_tier = "STANDARD"
+    elif composite_score >= 60.0:
+        quality_tier = "MODERATE"
+    else:
+        quality_tier = "WEAK"
+
     return CommitteeAdmission(not failures, "; ".join(failures) if failures else
                               "Trend, hourly direction, participation and net trade economics confirmed",
-                              checks, size, cost, net_rr)
+                              checks, base_size, cost, net_rr,
+                              composite_score=round(composite_score, 1),
+                              quality_tier=quality_tier)
 
 
 def committee_profit_config(base, stop_loss_pct):
@@ -105,15 +185,54 @@ def committee_profit_config(base, stop_loss_pct):
 
 
 def assess_live_committee_entry(report, **kwargs):
-    """Production ADX gate on top of v4; exits and research baseline unchanged."""
+    """Production composite admission gate with dynamic sizing.
+    
+    Instead of a binary ADX >= 25 cutoff, setups with ADX between 20-25
+    can be admitted if composite setup quality is high (>=65.0).
+    Position sizing scales smoothly with the composite score conviction tier.
+    """
     admission = assess_committee_entry(report, **kwargs)
     adx = report.get("metrics", {}).get("adx")
     valid = isinstance(adx, (int, float)) and not isinstance(adx, bool) and isfinite(adx) and 0 <= adx <= 100
-    passed = valid and adx >= LIVE_ADX_MIN
-    detail = (f"ADX(14) {adx:.2f}; need >= {LIVE_ADX_MIN:.0f} on a completed 5-minute candle"
-              if valid else "Missing or invalid ADX(14); new committee entry blocked")
-    checks = admission.checks + [{"name": "ADX trend strength", "passed": bool(passed), "detail": detail}]
+    
+    composite_score = admission.composite_score
+    if not valid:
+        passed = False
+        detail = "Missing or invalid ADX(14); new committee entry blocked"
+    elif adx >= LIVE_ADX_MIN:
+        passed = True
+        detail = f"ADX(14) {adx:.2f} confirms strong trend (>= {LIVE_ADX_MIN:.0f})"
+    elif adx >= LIVE_ADX_SOFT_MIN and composite_score >= COMPOSITE_SCORE_THRESHOLD:
+        passed = True
+        detail = f"ADX(14) {adx:.2f} admitted via composite setup score {composite_score:.1f}/100 (soft floor {LIVE_ADX_SOFT_MIN:.0f})"
+    else:
+        passed = False
+        detail = f"ADX(14) {adx:.2f} too low (need >= {LIVE_ADX_MIN:.0f} or >= {LIVE_ADX_SOFT_MIN:.0f} with composite score >= {COMPOSITE_SCORE_THRESHOLD:.0f})"
+
+    checks = admission.checks + [{"name": "ADX & composite setup strength", "passed": bool(passed), "detail": detail}]
     allowed = admission.allowed and passed
+
+    # Dynamic position sizing scaled to quality tier:
+    # High conviction (85+) -> full size (up to 25% max)
+    # Standard (70-84)     -> 80% of base size (up to ~20%)
+    # Moderate (60-69)     -> 50% of base size (up to ~10%)
+    if allowed:
+        if composite_score >= 85.0:
+            size_multiplier = 1.0
+            tier = "HIGH_CONVICTION"
+        elif composite_score >= 70.0:
+            size_multiplier = 0.80
+            tier = "STANDARD"
+        else:
+            size_multiplier = 0.50
+            tier = "MODERATE"
+        final_size = min(25.0, admission.size_pct * size_multiplier)
+    else:
+        final_size = 0.0
+        tier = admission.quality_tier
+
     return replace(admission, allowed=allowed, checks=checks,
-                   size_pct=admission.size_pct if allowed else 0.,
+                   size_pct=final_size,
+                   composite_score=round(composite_score, 1),
+                   quality_tier=tier,
                    reason=admission.reason + "; " + detail)

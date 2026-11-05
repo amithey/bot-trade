@@ -123,3 +123,11 @@ def test_runner_stop_fills_at_worse_of_open_and_stop(tmp_path):
     assert "AAA-USD" not in runner.portfolio.positions
     sell = runner.portfolio.trade_log[-1]
     assert sell.price == pytest.approx(min(float(df.Open.iloc[-1]), stop) * (1 - .0005))
+
+
+def test_runner_core_satellite_and_universe():
+    from trading.trend_scanner_runner import UNIVERSE
+    assert len(UNIVERSE) >= 28
+    assert 'SMH' in UNIVERSE
+    assert 'NVDA' in UNIVERSE
+    assert 'BTC-USD' in UNIVERSE
