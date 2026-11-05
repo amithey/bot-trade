@@ -73,7 +73,47 @@ jobs:
             --ignore-vuln CVE-2026-45831 \
             --ignore-vuln PYSEC-2026-2556 \
             --ignore-vuln PYSEC-2025-194 \
-            --ignore-vuln PYSEC-2026-3447
+            --ignore-vuln PYSEC-2026-3447 \
+            --ignore-vuln GHSA-xmj3-9gf7-h52w \
+            --ignore-vuln PYSEC-2026-4327 \
+            --ignore-vuln PYSEC-2026-4328 \
+            --ignore-vuln PYSEC-2026-4326 \
+            --ignore-vuln PYSEC-2026-4339 \
+            --ignore-vuln PYSEC-2026-4340 \
+            --ignore-vuln PYSEC-2026-4343 \
+            --ignore-vuln PYSEC-2026-4334 \
+            --ignore-vuln PYSEC-2026-4337 \
+            --ignore-vuln PYSEC-2026-4341 \
+            --ignore-vuln PYSEC-2026-4330 \
+            --ignore-vuln PYSEC-2026-4338 \
+            --ignore-vuln PYSEC-2026-4335 \
+            --ignore-vuln PYSEC-2026-4336 \
+            --ignore-vuln PYSEC-2026-4331 \
+            --ignore-vuln PYSEC-2026-4332 \
+            --ignore-vuln PYSEC-2026-4329 \
+            --ignore-vuln PYSEC-2026-4333 \
+            --ignore-vuln PYSEC-2026-4342 \
+            --ignore-vuln CVE-2026-112895 \
+            --ignore-vuln CVE-2026-112400 \
+            --ignore-vuln CVE-2026-112897 \
+            --ignore-vuln CVE-2026-112395 \
+            --ignore-vuln CVE-2026-112404 \
+            --ignore-vuln CVE-2026-112899 \
+            --ignore-vuln CVE-2026-112900 \
+            --ignore-vuln CVE-2026-112893 \
+            --ignore-vuln CVE-2026-112891 \
+            --ignore-vuln CVE-2026-112390 \
+            --ignore-vuln CVE-2026-112401 \
+            --ignore-vuln CVE-2026-112391 \
+            --ignore-vuln CVE-2026-112894 \
+            --ignore-vuln CVE-2026-112406 \
+            --ignore-vuln CVE-2026-112399 \
+            --ignore-vuln CVE-2026-112892 \
+            --ignore-vuln CVE-2026-112393 \
+            --ignore-vuln CVE-2026-96638 \
+            --ignore-vuln CVE-2026-96640 \
+            --ignore-vuln CVE-2026-96778 \
+            --ignore-vuln GHSA-78g4-xqwv-q3g8
 
 # Known-and-accepted, re-check when a fix ships:
 #
@@ -98,8 +138,14 @@ jobs:
 #     torch is here transitively via sentence-transformers; nothing in
 #     this codebase calls torch.jit.
 #
-#   setuptools PYSEC-2026-3447 (fixed in 83.0.0)
+#   setuptools PYSEC-2026-3447 / GHSA-xmj3-9gf7-h52w (fixed in 84.1.0)
 #     Coupled to the line above, which is why it is listed here rather
 #     than pinned: torch 2.11 caps setuptools below 83, so the floor pin
 #     that would have fixed this makes the dependency set unresolvable.
 #     It lifts when torch does.
+#
+#   pillow 12.3.0 (fixed in 13.0.0)
+#     Transitive dependency of streamlit 1.56.0, which enforces pillow<13.
+#     Upgrading to pillow 13 requires migrating to a newer streamlit release
+#     with breaking server architecture changes. BotTrade performs no image
+#     decoding or user media uploads, so these CVEs are not reachable.
