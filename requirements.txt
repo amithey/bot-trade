@@ -40,6 +40,9 @@ transformers==5.10.0
 yfinance==1.2.2
 pandas==2.1.3
 numpy==1.26.4
+# Transitive dep of streamlit, pinned: pyarrow 26 needs NumPy 2, and numpy is pinned to 1.26.4 above
+# (st.dataframe raised ImportError in CI on 2026-11-01 with an unpinned install).
+pyarrow==23.0.1
 
 # --- Knowledge ingestion: YouTube + web articles ------------------------------
 # Article scraping uses the stdlib HTMLParser — no extra dependency.

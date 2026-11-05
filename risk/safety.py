@@ -8,8 +8,11 @@ from the trade log + the current wall-clock. That makes it crash-safe
 Checks
 ------
 1. **Consecutive losses** — after N losing round-trips in a row, BUYs are
-   blocked until either (a) a manual reset, or (b) the next session/day
-   rolls over.
+   blocked until a winning close breaks the streak, a manual override, or
+   the streak is restarted from a fixed point (``streak_reset_at``, set with
+   ``BOTTRADE_LOSS_STREAK_RESET_AT``): trades at or before that moment no
+   longer count. The log alone can never break a streak, because a blocked
+   account cannot open the trade that would close in profit.
 
 2. **Tilt cooldown** — after a single round-trip that loses more than
    ``tilt_loss_pct`` of capital, BUYs are blocked for
@@ -24,8 +27,9 @@ Checks
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
 from utils.logger import get_logger
@@ -36,6 +40,31 @@ logger = get_logger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+LOSS_STREAK_RESET_ENV = "BOTTRADE_LOSS_STREAK_RESET_AT"
+
+
+def _naive_utc(stamp: datetime) -> datetime:
+    if stamp.tzinfo is not None:
+        return stamp.astimezone(timezone.utc).replace(tzinfo=None)
+    return stamp
+
+
+def _loss_streak_reset_from_env() -> Optional[datetime]:
+    """Fixed restart point for the consecutive-loss counter (naive UTC).
+
+    ISO-8601, e.g. ``2026-11-01T00:00:00+00:00``. Unset or unparsable means no
+    reset, so the breaker keeps counting the whole trade log (fails closed).
+    """
+    raw = os.environ.get(LOSS_STREAK_RESET_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        return _naive_utc(datetime.fromisoformat(raw.replace("Z", "+00:00")))
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r", LOSS_STREAK_RESET_ENV, raw)
+        return None
 
 
 @dataclass
@@ -50,6 +79,9 @@ class SafetyConfig:
     max_round_trips_per_day: int = 0       # 0 = disabled
     # Slippage budget — see risk.slippage for actual modeling
     enable_slippage: bool = True
+    # Closing trades at or before this moment (naive UTC) are ignored by the
+    # consecutive-loss breaker. None keeps the full history.
+    streak_reset_at: Optional[datetime] = field(default_factory=_loss_streak_reset_from_env)
 
     @classmethod
     def for_profile(cls, risk_profile: str) -> "SafetyConfig":
@@ -178,7 +210,11 @@ class SafetyController:
         # --- Consecutive losses ---
         consec = 0
         last_loss_at: Optional[datetime] = None
+        reset_at = _naive_utc(cfg.streak_reset_at) if cfg.streak_reset_at else None
         for r in reversed(sells):
+            closed_at = getattr(r, "executed_at", None)
+            if reset_at is not None and isinstance(closed_at, datetime)                     and _naive_utc(closed_at) <= reset_at:
+                break  # restarted: earlier losses no longer count
             pnl = float(getattr(r, "realized_pnl", 0.0) or 0.0)
             if pnl < 0:
                 consec += 1
