@@ -155,6 +155,7 @@ python main.py status
 | ML Lab | Train/evaluate the ML models under `ml/` |
 | Analytics | Sharpe/Sortino/Calmar, drawdown, attribution |
 | Committee Lab | Backtest the 38-indicator strategy, parameter sweep — no API calls |
+| Trend Scanner | Daily & 4H multi-asset trend following, Chandelier trailing stops, Core/Satellite regime allocation |
 | Usage and Billing | Per-account spend, cache savings, cost estimator |
 
 ## Project layout
