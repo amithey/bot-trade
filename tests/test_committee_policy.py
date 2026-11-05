@@ -115,13 +115,13 @@ def test_composite_setup_scoring_and_soft_adx_admission():
     args = dict(score=.4, quorum=True, categories={k: .4 for k in ('Trend', 'Momentum', 'Volume')},
                 fee_rate=.001, slippage_bps=5., stop_loss_pct=.8, take_profit_pct=2.)
     # ADX 23.5 with high composite setup quality passes via composite scoring
-    res = assess_live_committee_entry(rep, **args)
+    res = assess_live_committee_entry(rep, allow_soft_adx=True, **args)
     assert res.allowed
     assert res.composite_score >= 65.0
     assert res.size_pct > 0
 
     # Very weak ADX < 20 still fails closed
     rep['metrics']['adx'] = 14.0
-    res_weak = assess_live_committee_entry(rep, **args)
+    res_weak = assess_live_committee_entry(rep, allow_soft_adx=True, **args)
     assert not res_weak.allowed
     assert res_weak.size_pct == 0.0

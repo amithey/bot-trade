@@ -3,11 +3,12 @@
 The vote is confirmation, never the trading thesis. Corporate ratios are not
 used to value crypto; the policy uses completed price/volume evidence and costs.
 """
+import os
 from dataclasses import dataclass, asdict, replace
 from math import isfinite
 
 VERSION = "committee-v4"
-LIVE_VERSION = "committee-v6-composite"
+LIVE_VERSION = "committee-v5-adx25"
 LIVE_ADX_MIN = 25.0
 LIVE_ADX_SOFT_MIN = 20.0
 COMPOSITE_SCORE_THRESHOLD = 65.0
@@ -184,38 +185,37 @@ def committee_profit_config(base, stop_loss_pct):
     )
 
 
-def assess_live_committee_entry(report, **kwargs):
-    """Production composite admission gate with dynamic sizing.
-    
-    Instead of a binary ADX >= 25 cutoff, setups with ADX between 20-25
-    can be admitted if composite setup quality is high (>=65.0).
-    Position sizing scales smoothly with the composite score conviction tier.
+def assess_live_committee_entry(report, *, allow_soft_adx: bool | None = None, **kwargs):
+    """Production admission gate with composite setup scoring and dynamic sizing.
+
+    Preserves full compatibility with v5-adx25 while enabling continuous scoring
+    and soft ADX floors when allow_soft_adx is enabled.
     """
+    if allow_soft_adx is None:
+        allow_soft_adx = os.getenv("BOTTRADE_COMPOSITE_SCORING", "0").lower() in ("1", "true")
+
     admission = assess_committee_entry(report, **kwargs)
     adx = report.get("metrics", {}).get("adx")
     valid = isinstance(adx, (int, float)) and not isinstance(adx, bool) and isfinite(adx) and 0 <= adx <= 100
-    
+
     composite_score = admission.composite_score
     if not valid:
         passed = False
         detail = "Missing or invalid ADX(14); new committee entry blocked"
     elif adx >= LIVE_ADX_MIN:
         passed = True
-        detail = f"ADX(14) {adx:.2f} confirms strong trend (>= {LIVE_ADX_MIN:.0f})"
-    elif adx >= LIVE_ADX_SOFT_MIN and composite_score >= COMPOSITE_SCORE_THRESHOLD:
+        detail = f"ADX(14) {adx:.2f}; need >= {LIVE_ADX_MIN:.0f} on a completed 5-minute candle"
+    elif allow_soft_adx and adx >= LIVE_ADX_SOFT_MIN and composite_score >= COMPOSITE_SCORE_THRESHOLD:
         passed = True
         detail = f"ADX(14) {adx:.2f} admitted via composite setup score {composite_score:.1f}/100 (soft floor {LIVE_ADX_SOFT_MIN:.0f})"
     else:
         passed = False
-        detail = f"ADX(14) {adx:.2f} too low (need >= {LIVE_ADX_MIN:.0f} or >= {LIVE_ADX_SOFT_MIN:.0f} with composite score >= {COMPOSITE_SCORE_THRESHOLD:.0f})"
+        detail = f"ADX(14) {adx:.2f}; need >= {LIVE_ADX_MIN:.0f} on a completed 5-minute candle"
 
-    checks = admission.checks + [{"name": "ADX & composite setup strength", "passed": bool(passed), "detail": detail}]
+    checks = admission.checks + [{"name": "ADX trend strength", "passed": bool(passed), "detail": detail}]
     allowed = admission.allowed and passed
 
-    # Dynamic position sizing scaled to quality tier:
-    # High conviction (85+) -> full size (up to 25% max)
-    # Standard (70-84)     -> 80% of base size (up to ~20%)
-    # Moderate (60-69)     -> 50% of base size (up to ~10%)
+    # Dynamic sizing scaling
     if allowed:
         if composite_score >= 85.0:
             size_multiplier = 1.0
