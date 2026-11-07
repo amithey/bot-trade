@@ -131,3 +131,58 @@ def test_runner_core_satellite_and_universe():
     assert 'SMH' in UNIVERSE
     assert 'NVDA' in UNIVERSE
     assert 'BTC-USD' in UNIVERSE
+
+
+def _two_asset_runner(tmp_path, df, calls):
+    def fetch(ticker):
+        calls.append(ticker)
+        return df.tz_localize("UTC")
+    return TrendScannerRunner(tmp_path, universe=["AAA-USD"], fetch=fetch)
+
+
+def test_position_outside_the_universe_is_still_marked_and_stopped(tmp_path):
+    df = bars(n=260, drift=.003)
+    calls = []
+    runner = _two_asset_runner(tmp_path, df, calls)
+    runner.portfolio.buy("OLD-USD", 100., cash_amount=1000.)
+    stop = float(df.Low.iloc[-1]) + 1
+    runner.state["positions"]["OLD-USD"] = {"peak_close": 100., "stop": stop}
+    runner.state["decided"]["OLD-USD"] = str(df.index[-2].date())
+    step = runner.step(now=(df.index[-1] + pd.Timedelta(hours=3)).tz_localize("UTC").to_pydatetime())
+    assert "OLD-USD" in calls and step["managed_outside_universe"] == ["OLD-USD"]
+    assert "OLD-USD" not in runner.portfolio.positions
+    assert runner.portfolio.trade_log[-1].price == pytest.approx(min(float(df.Open.iloc[-1]), stop) * (1 - .0005))
+
+
+def test_held_asset_outside_the_universe_is_marked_to_market(tmp_path):
+    df = bars(n=260, drift=.003)
+    runner = _two_asset_runner(tmp_path, df, [])
+    runner.portfolio.buy("OLD-USD", 100., cash_amount=1000.)
+    runner.state["positions"]["OLD-USD"] = {"peak_close": 100., "stop": 1.}
+    runner.step(now=(df.index[-1] + pd.Timedelta(hours=3)).tz_localize("UTC").to_pydatetime())
+    assert runner.portfolio.positions["OLD-USD"].current_price == pytest.approx(float(df.Close.iloc[-1]))
+
+
+def test_removed_asset_is_not_fetched_once_it_is_gone_and_never_re_entered(tmp_path):
+    df = bars(n=260, drift=.004)
+    calls = []
+    runner = _two_asset_runner(tmp_path, df, calls)
+    runner.portfolio.buy("OLD-USD", 100., cash_amount=1000.)
+    stop = float(df.Low.iloc[-1]) + 1
+    runner.state["positions"]["OLD-USD"] = {"peak_close": 100., "stop": stop}
+    runner.state["decided"]["OLD-USD"] = str(df.index[-2].date())
+    now = (df.index[-1] + pd.Timedelta(hours=3)).tz_localize("UTC").to_pydatetime()
+    runner.step(now=now)                                   # stopped out here
+    assert "OLD-USD" not in runner.state["pending_entries"]
+    calls.clear()
+    step = runner.step(now=now + pd.Timedelta(minutes=30))
+    assert "OLD-USD" not in calls and step["managed_outside_universe"] == []
+    assert "OLD-USD" not in runner.state["pending_entries"]
+
+
+def test_assets_that_were_never_held_stay_out_of_a_step(tmp_path):
+    df = bars(n=260, drift=.003)
+    calls = []
+    runner = _two_asset_runner(tmp_path, df, calls)
+    runner.step(now=(df.index[-1] + pd.Timedelta(hours=3)).tz_localize("UTC").to_pydatetime())
+    assert set(calls) == {"AAA-USD"}

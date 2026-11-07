@@ -103,7 +103,11 @@ class TrendScannerRunner:
     def step(self, now=None):
         now = now or datetime.now(timezone.utc)
         frames, closed, errors = {}, {}, {}
-        for ticker in self.universe:
+        # An open position stays managed (price marks, stops, trend exits) even
+        # after the universe stops listing it; otherwise it would be frozen at
+        # its last price with no stop. Such tickers are never entered again.
+        held_outside = sorted(t for t in self.portfolio.positions if t not in self.universe)
+        for ticker in self.universe + held_outside:
             try:
                 frames[ticker], closed[ticker] = session_frame(self.fetch(ticker), ticker, now)
             except Exception as exc:                      # one bad feed must not stop the rest
@@ -163,6 +167,8 @@ class TrendScannerRunner:
         for ticker, df in frames.items():
             if len(df) == 0:
                 continue
+            if ticker not in self.universe and ticker not in self.state["positions"]:
+                continue                       # sold above: no new decision on a removed asset
             complete = df if closed.get(ticker, False) else df.iloc[:-1]
             if len(complete) == 0:
                 continue
@@ -191,6 +197,7 @@ class TrendScannerRunner:
             "interval": self.interval,
             "core_satellite": self.core_satellite,
             "universe_count": len(self.universe),
+            "managed_outside_universe": held_outside,
         }
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.portfolio.save(self.portfolio_path)
