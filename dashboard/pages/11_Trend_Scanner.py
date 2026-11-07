@@ -26,7 +26,7 @@ secure_page()
 
 from dashboard.components import page_header
 from portfolio.virtual_account import LivePortfolio
-from trading.trend_scanner_runner import CONFIG, UNIVERSE, TrendScannerRunner
+from trading.trend_scanner_runner import CONFIG, UNIVERSE
 from strategy.regime_core_satellite import detect_regime, CoreSatelliteConfig
 
 page_header("Trend scanner", "Multi-asset trend following with trailing chandelier stops & Core/Satellite regime protection.",
@@ -35,40 +35,10 @@ page_header("Trend scanner", "Multi-asset trend following with trailing chandeli
 STATE_DIR = _PROJECT_ROOT / "data" / "trend_scanner_paper"
 portfolio_path, state_path = STATE_DIR / "portfolio.json", STATE_DIR / "scanner_state.json"
 
-# ── Control panel ─────────────────────────────────────────────────────────────
-c_ctrl1, c_ctrl2, c_ctrl3 = st.columns([2, 2, 2])
-with c_ctrl1:
-    selected_interval = st.selectbox("Execution Timeframe", ["Daily (1d)", "4-Hour (4h)"], index=0)
-    interval_code = "4h" if "4h" in selected_interval else "1d"
-
-with c_ctrl2:
-    enable_core_sat = st.checkbox(
-        "Core/Satellite Regime Protection",
-        value=True,
-        help="Keeps 45% core baseline in broad market proxy (SPY) when Price > SMA200 so the market never outruns cash, while reserving 55% for active trend breakouts.",
-    )
-
-with c_ctrl3:
-    st.write("")
-    st.write("")
-    run_clicked = st.button("⚡ Run Scan / Step Now", type="primary", use_container_width=True)
-
-if run_clicked:
-    with st.spinner(f"Running trend scan across {len(UNIVERSE)} assets ({selected_interval})..."):
-        runner = TrendScannerRunner(
-            STATE_DIR,
-            universe=UNIVERSE,
-            config=CONFIG,
-            interval=interval_code,
-            core_satellite=enable_core_sat,
-        )
-        step_result = runner.step()
-        st.success(f"Scan step completed at {step_result.get('at', '')[:19]}! {len(step_result.get('decided', []))} assets evaluated.")
-        st.rerun()
-
-# ── Check state existence ─────────────────────────────────────────────────────
+# This page only reads. The background loop (tools/run_trend_scanner.py) is the single
+# writer of the scanner state; a second writer here once overwrote its trades.
 if not portfolio_path.exists() or not state_path.exists():
-    st.info("The trend scanner has not completed its first run yet. Click 'Run Scan / Step Now' above to initialize and execute the first scan.")
+    st.info("The trend scanner has not completed its first run yet. It starts automatically with the server.")
     st.stop()
 
 portfolio = LivePortfolio.load(portfolio_path)
@@ -83,7 +53,14 @@ c3.metric("Open positions", f"{len(portfolio.positions)} / {CONFIG.max_positions
 last_step_at = state.get("last_step", {}).get("at", "never")[:16].replace("T", " ")
 c4.metric("Last run (UTC)", last_step_at)
 
-errors = state.get("last_step", {}).get("errors") or {}
+last_step = state.get("last_step", {})
+st.caption(
+    f"Timeframe {last_step.get('interval', '1d')} · "
+    f"Core/Satellite {'ON' if last_step.get('core_satellite') else 'OFF'} · "
+    f"{last_step.get('universe_count', len(UNIVERSE))} assets · runs automatically every 30 minutes; this page is read-only."
+)
+
+errors = last_step.get("errors") or {}
 if errors:
     st.warning("Data unavailable on the last run for: " + ", ".join(sorted(errors)))
 

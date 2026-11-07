@@ -23,6 +23,8 @@ primary_region = "iad"  # us-east (Ashburn, VA) — change to whatever is closes
   # Consecutive-loss breaker counts from this moment (UTC). The old bot was blocked since
   # 2026-09-17 by three losses and could never trade out of it (risk/safety.py).
   BOTTRADE_LOSS_STREAK_RESET_AT = "2026-11-01T00:00:00+00:00"
+  # Core/Satellite inside the scanner loop: 45% SPY core while SPY is above its 200-day average.
+  BOTTRADE_CORE_SATELLITE = "1"
   # Streamlit reads these from the process environment directly; the
   # Dockerfile already bakes the address/port/headless flags, this just
   # keeps them explicit for anyone reading the Fly config.

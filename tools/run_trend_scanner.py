@@ -1,6 +1,12 @@
-"""Run the paper trend scanner once, or repeatedly with --loop-minutes."""
+"""Run the paper trend scanner once, or repeatedly with --loop-minutes.
+
+This loop is the only writer of the scanner state files; the dashboard page
+only reads them. Core/Satellite regime allocation is on when
+BOTTRADE_CORE_SATELLITE is 1/true (or --core-satellite), off otherwise.
+"""
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -22,12 +28,23 @@ def status(runner):
     return "\n".join(lines)
 
 
-def main():
+def env_flag(name):
+    return os.environ.get(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=Path("data/trend_scanner_paper"))
     parser.add_argument("--loop-minutes", type=float, default=0.)
-    args = parser.parse_args()
-    runner = TrendScannerRunner(args.state_dir)
+    parser.add_argument("--core-satellite", action=argparse.BooleanOptionalAction,
+                        default=env_flag("BOTTRADE_CORE_SATELLITE"),
+                        help="Keep a SPY core while SPY is above its 200-day average (default: BOTTRADE_CORE_SATELLITE)")
+    return parser.parse_args(argv)
+
+
+def main():
+    args = parse_args()
+    runner = TrendScannerRunner(args.state_dir, core_satellite=args.core_satellite)
     while True:
         step = runner.step()
         print(json.dumps(step), flush=True)
