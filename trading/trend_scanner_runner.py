@@ -122,6 +122,10 @@ class TrendScannerRunner:
         if self.core_satellite and "SPY" in frames and len(frames["SPY"]) > 0:
             try:
                 from strategy.regime_core_satellite import calculate_core_rebalance_action
+                # Rebalance against current marks, not the previous cycle's.
+                for held_ticker, held_df in frames.items():
+                    if held_ticker in self.portfolio.positions and len(held_df):
+                        self.portfolio.update_price(held_ticker, float(held_df.iloc[-1]["Close"]))
                 core_action = calculate_core_rebalance_action(self.portfolio, frames["SPY"])
                 if core_action["action"] == "BUY" and core_action["rebalance_cash"] > 10:
                     core_fill = float(frames["SPY"].iloc[-1]["Close"]) * (1 + SLIPPAGE_BPS / 10000)
@@ -130,8 +134,16 @@ class TrendScannerRunner:
                     self._event(now, "CORE_REBALANCE", "SPY", f"BUY ${core_action['rebalance_cash']:,.2f} @ {core_fill:.2f}")
                 elif core_action["action"] == "SELL" and "SPY" in self.portfolio.positions:
                     core_fill = float(frames["SPY"].iloc[-1]["Close"]) * (1 - SLIPPAGE_BPS / 10000)
-                    self.portfolio.sell("SPY", core_fill, reasoning=f"Core/Satellite Regime: {core_action['reason']}")
-                    self._event(now, "CORE_REBALANCE", "SPY", f"SELL @ {core_fill:.2f}")
+                    held = self.portfolio.positions["SPY"].quantity
+                    # Bear regime (target 0%) liquidates; an overweight core only sheds the excess.
+                    trim = None
+                    if core_action["plan"].target_core_pct > 0:
+                        excess = core_action["rebalance_cash"] / core_fill
+                        trim = excess if excess < held * 0.999 else None
+                    self.portfolio.sell("SPY", core_fill, quantity=trim,
+                                        reasoning=f"Core/Satellite Regime: {core_action['reason']}")
+                    self._event(now, "CORE_REBALANCE", "SPY",
+                                f"SELL {'all' if trim is None else f'{trim:.4f}'} @ {core_fill:.2f}")
             except Exception as exc:
                 errors["core_satellite"] = str(exc)
 

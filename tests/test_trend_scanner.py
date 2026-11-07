@@ -186,3 +186,78 @@ def test_assets_that_were_never_held_stay_out_of_a_step(tmp_path):
     runner = _two_asset_runner(tmp_path, df, calls)
     runner.step(now=(df.index[-1] + pd.Timedelta(hours=3)).tz_localize("UTC").to_pydatetime())
     assert set(calls) == {"AAA-USD"}
+
+
+# ── Core/Satellite inside the loop ───────────────────────────────────────────
+
+def _spy_frame(bull=True, n=260, jump=1.0):
+    close = np.linspace(80., 150., n) if bull else np.linspace(150., 80., n)
+    close = close.copy()
+    close[-1] *= jump
+    open_ = np.r_[close[0], close[:-1]]
+    return pd.DataFrame({"Open": open_, "High": np.maximum(open_, close) * 1.002,
+                         "Low": np.minimum(open_, close) * .998, "Close": close},
+                        index=pd.date_range("2025-01-01", periods=n, freq="D"))
+
+
+AFTER_CLOSE = datetime(2025, 9, 18, 22, 0, tzinfo=timezone.utc)   # long after the last session closed
+
+
+def _core_runner(tmp_path, frame_of):
+    return TrendScannerRunner(tmp_path, universe=["SPY"], fetch=lambda _: frame_of(), core_satellite=True)
+
+
+def _core_share(runner):
+    position = runner.portfolio.positions.get("SPY")
+    return 0. if position is None else position.market_value / runner.portfolio.get_total_value()
+
+
+def test_core_is_bought_once_and_then_left_alone(tmp_path):
+    runner = _core_runner(tmp_path, lambda: _spy_frame())
+    runner.step(now=AFTER_CLOSE)
+    assert _core_share(runner) == pytest.approx(.45, abs=.01)
+    trades = len(runner.portfolio.trade_log)
+    runner.step(now=AFTER_CLOSE + pd.Timedelta(minutes=30))
+    assert len(runner.portfolio.trade_log) == trades
+
+
+def test_overweight_core_is_trimmed_to_target_not_liquidated(tmp_path):
+    frame = {"df": _spy_frame()}
+    runner = _core_runner(tmp_path, lambda: frame["df"])
+    runner.step(now=AFTER_CLOSE)
+    before = runner.portfolio.positions["SPY"].quantity
+    frame["df"] = _spy_frame(jump=1.3)                      # SPY rallies 30%: core far above target
+    runner.step(now=AFTER_CLOSE + pd.Timedelta(minutes=30))
+    after = runner.portfolio.positions["SPY"].quantity     # must still exist
+    assert 0 < after < before
+    assert _core_share(runner) == pytest.approx(.45, abs=.02)
+
+
+def test_bear_regime_liquidates_the_core(tmp_path):
+    runner = _core_runner(tmp_path, lambda: _spy_frame(bull=False))
+    runner.portfolio.buy("SPY", 80., cash_amount=4500.)
+    runner.step(now=AFTER_CLOSE)
+    assert "SPY" not in runner.portfolio.positions
+
+
+def test_core_stays_off_unless_enabled(tmp_path):
+    runner = TrendScannerRunner(tmp_path, universe=["SPY"], fetch=lambda _: _spy_frame())
+    runner.step(now=AFTER_CLOSE)
+    assert "SPY" not in runner.portfolio.positions
+
+
+def test_loop_flag_comes_from_the_environment_and_can_be_overridden(monkeypatch):
+    from tools.run_trend_scanner import parse_args
+    monkeypatch.delenv("BOTTRADE_CORE_SATELLITE", raising=False)
+    assert parse_args([]).core_satellite is False
+    monkeypatch.setenv("BOTTRADE_CORE_SATELLITE", "1")
+    assert parse_args([]).core_satellite is True
+    assert parse_args(["--no-core-satellite"]).core_satellite is False
+    monkeypatch.setenv("BOTTRADE_CORE_SATELLITE", "0")
+    assert parse_args(["--core-satellite"]).core_satellite is True
+
+
+def test_dashboard_page_has_no_way_to_write_scanner_state():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parent.parent / "dashboard" / "pages" / "11_Trend_Scanner.py").read_text(encoding="utf-8")
+    assert "TrendScannerRunner" not in source and ".step(" not in source and "st.button" not in source
